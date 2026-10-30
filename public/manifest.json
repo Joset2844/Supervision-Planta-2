@@ -1,6 +1,6 @@
 {
-  "name": "Supervisión de Planta",
-  "short_name": "Planta",
+  "name": "Supervisión de Plantav2",
+  "short_name": "Plantav2",
   "description": "Inventario, control de máquinas, producción por turno y operadores en planta.",
   "start_url": "./index.html",
   "scope": "./",

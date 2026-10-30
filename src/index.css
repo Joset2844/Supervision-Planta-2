@@ -1,0 +1,63 @@
+@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap');
+@import "tailwindcss";
+
+:root {
+  --bg: #12161F;
+  --panel: #1A202C;
+  --panel-alt: #232A38;
+  --border: #2D3748;
+  --border-input: #4A5568;
+  --dark: #12161F;
+  --dark-2: #1A202C;
+  --dark-3: #2D3748;
+  --amber: #F2A93B;
+  --amber-bg: #3A2E1B;
+  --amber-text: #F6AD55;
+  --green: #38A169;
+  --red: #E53E3E;
+  --muted: #A0AEC0;
+  --muted-2: #CBD5E0;
+  --text: #F7FAFC;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  min-height: 100%;
+}
+
+/* Ensure font sizes on touch inputs don't trigger iOS Safari auto-zoom */
+@media screen and (max-width: 768px) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+
+/* Custom scrollbars for industrial theme */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #12161F;
+}
+::-webkit-scrollbar-thumb {
+  background: #2D3748;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #4A5568;
+}

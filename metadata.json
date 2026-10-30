@@ -1,0 +1,8 @@
+{
+  "name": "Supervisión de Planta",
+  "description": "Sistema integral de supervisión de planta: inventario de piezas, control de máquinas, registro y balance de turnos de producción, activación y reportes para exportar a Excel y sincronización con Supabase.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

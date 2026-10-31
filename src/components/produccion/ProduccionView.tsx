@@ -43,7 +43,7 @@ import {
   generarReporteActivacion,
   copiarAlPortapapeles,
 } from '../../services/reports';
-import { getSupabaseConfig, sbLogin, sbSignUp } from '../../services/supabase';
+import { getSupabaseConfig, sbLogin } from '../../services/supabase';
 import { Maquina, TurnoMaquina, RegistroTurno } from '../../types';
 
 const MOTIVOS_PARADA = ['Mantenimiento', 'Falta de personal', 'Desglose', 'Calibración'];
@@ -78,7 +78,6 @@ export const ProduccionView: React.FC = () => {
 
   // DB save & auth states
   const [guardandoDB, setGuardandoDB] = useState(false);
-  const [authModo, setAuthModo] = useState<'login' | 'signup'>('login');
   const [confirmarReemplazoData, setConfirmarReemplazoData] = useState<{
     fecha: string;
     tipo: string;
@@ -379,7 +378,7 @@ export const ProduccionView: React.FC = () => {
     }
   };
 
-  // Login & Signup handler
+  // Login handler
   const handleConfirmLogin = async () => {
     const cfg = getSupabaseConfig(false);
     if (!cfg) return;
@@ -389,14 +388,8 @@ export const ProduccionView: React.FC = () => {
       return;
     }
     try {
-      let s;
-      if (authModo === 'signup') {
-        s = await sbSignUp(cfg, loginEmail, loginPass);
-        showToast('ok', 'Cuenta creada e inicio de sesión exitoso');
-      } else {
-        s = await sbLogin(cfg, loginEmail, loginPass);
-        showToast('ok', 'Sesión iniciada');
-      }
+      const s = await sbLogin(cfg, loginEmail, loginPass);
+      showToast('ok', 'Sesión iniciada');
       setSession(s);
       setPanelLoginOpen(false);
       setLoginPass('');
@@ -560,7 +553,7 @@ export const ProduccionView: React.FC = () => {
         </div>
       </div>
 
-      {/* Supabase Login / Signup Modal */}
+      {/* Supabase Login Modal */}
       {panelLoginOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs">
           <div className="bg-[#1A202C] border border-[#2D3748] rounded-2xl p-5 max-w-sm w-full shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
@@ -568,7 +561,7 @@ export const ProduccionView: React.FC = () => {
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-[#F2A93B]" />
                 <h3 className="text-sm font-bold m-0 text-white uppercase font-['Oswald',sans-serif] tracking-wider">
-                  {authModo === 'login' ? 'Iniciar Sesión en Supabase' : 'Crear Cuenta en Supabase'}
+                  Iniciar Sesión en Supabase
                 </h3>
               </div>
               <button
@@ -580,37 +573,9 @@ export const ProduccionView: React.FC = () => {
               </button>
             </div>
 
-            {/* Toggle Login vs Register */}
-            <div className="flex p-1 bg-[#12161F] rounded-xl border border-[#2D3748]">
-              <button
-                type="button"
-                onClick={() => {
-                  setAuthModo('login');
-                  setLoginError('');
-                }}
-                className={`flex-1 py-1.5 text-xs font-bold font-['Oswald',sans-serif] tracking-wider uppercase rounded-lg transition-colors cursor-pointer ${
-                  authModo === 'login' ? 'bg-[#F2A93B] text-[#12161F]' : 'text-[#A0AEC0] hover:text-white'
-                }`}
-              >
-                Ingresar
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAuthModo('signup');
-                  setLoginError('');
-                }}
-                className={`flex-1 py-1.5 text-xs font-bold font-['Oswald',sans-serif] tracking-wider uppercase rounded-lg transition-colors cursor-pointer ${
-                  authModo === 'signup' ? 'bg-[#F2A93B] text-[#12161F]' : 'text-[#A0AEC0] hover:text-white'
-                }`}
-              >
-                Registrar
-              </button>
-            </div>
-
             <div className="space-y-2.5">
               <div>
-                <label className="block text-[11px] font-semibold text-[#CBD5E0] mb-1">
+                <label className="block text-[11px] font-semibold text-[#CBD5E0] mb-1 uppercase tracking-wide">
                   Usuario o Correo
                 </label>
                 <input
@@ -618,11 +583,11 @@ export const ProduccionView: React.FC = () => {
                   value={loginEmail}
                   onChange={(e) => setLoginEmail(e.target.value)}
                   placeholder="ej: supervisor1 o usuario@correo.com"
-                  className="w-full py-2 px-3 rounded-xl border border-[#4A5568] text-xs bg-[#232A38] text-white outline-none focus:border-[#F2A93B]"
+                  className="w-full py-2.5 px-3 rounded-xl border border-[#4A5568] text-xs bg-[#232A38] text-white outline-none focus:border-[#F2A93B]"
                 />
               </div>
               <div>
-                <label className="block text-[11px] font-semibold text-[#CBD5E0] mb-1">
+                <label className="block text-[11px] font-semibold text-[#CBD5E0] mb-1 uppercase tracking-wide">
                   Contraseña
                 </label>
                 <input
@@ -630,7 +595,7 @@ export const ProduccionView: React.FC = () => {
                   value={loginPass}
                   onChange={(e) => setLoginPass(e.target.value)}
                   placeholder="Tu contraseña"
-                  className="w-full py-2 px-3 rounded-xl border border-[#4A5568] text-xs bg-[#232A38] text-white outline-none focus:border-[#F2A93B]"
+                  className="w-full py-2.5 px-3 rounded-xl border border-[#4A5568] text-xs bg-[#232A38] text-white outline-none focus:border-[#F2A93B]"
                 />
               </div>
             </div>
@@ -641,13 +606,17 @@ export const ProduccionView: React.FC = () => {
               </p>
             )}
 
+            <p className="text-[11px] text-[#A0AEC0] m-0 leading-normal">
+              Para registrar una nueva cuenta o solicitar acceso, contacta al Administrador de Planta.
+            </p>
+
             <div className="flex gap-2 pt-1">
               <button
                 type="button"
                 onClick={handleConfirmLogin}
                 className="flex-1 bg-[#F2A93B] text-[#12161F] py-2.5 px-3 rounded-xl text-xs font-bold uppercase font-['Oswald',sans-serif] tracking-wider cursor-pointer hover:brightness-105 active:scale-95 transition-all shadow-sm"
               >
-                {authModo === 'login' ? 'Iniciar Sesión' : 'Crear Cuenta'}
+                Iniciar Sesión
               </button>
               <button
                 type="button"

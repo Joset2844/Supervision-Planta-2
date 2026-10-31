@@ -120,6 +120,33 @@ export async function sbSignUp(cfg: SupabaseConfig, usuario: string, pass: strin
   return sbLogin(cfg, email, pass);
 }
 
+/**
+ * Registra una cuenta nueva sin reemplazar ni sobrescribir la sesión activa del Administrador
+ */
+export async function sbAdminCrearUsuario(
+  cfg: SupabaseConfig,
+  usuario: string,
+  pass: string
+): Promise<{ email: string; id?: string }> {
+  let email = sbUsuarioAEmail(usuario);
+  if (!usuario.includes('@') && email.endsWith('.local')) {
+    email = usuario.trim().toLowerCase().replace(/\s+/g, '') + '@planta.com';
+  }
+  const resp = await fetch(cfg.url + '/auth/v1/signup', {
+    method: 'POST',
+    headers: { apikey: cfg.key, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password: pass }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) {
+    throw new Error(data.error_description || data.msg || data.message || `HTTP ${resp.status}`);
+  }
+  return {
+    email: data.user?.email || email,
+    id: data.user?.id || data.id,
+  };
+}
+
 let sbRenovandoPromesa: Promise<SupabaseSession | null> | null = null;
 export async function sbRenovarSesion(cfg: SupabaseConfig, session: SupabaseSession): Promise<SupabaseSession | null> {
   if (!session || !session.refresh_token) {

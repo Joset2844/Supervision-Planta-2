@@ -15,6 +15,8 @@ import {
   Sun,
   Moon,
   User,
+  UserPlus,
+  X,
   LogOut,
   ChevronDown,
   ChevronUp,
@@ -23,7 +25,7 @@ import {
 import {
   getSupabaseConfig,
   sbLogin,
-  sbSignUp,
+  sbAdminCrearUsuario,
   sbFetch,
 } from '../../services/supabase';
 import {
@@ -38,11 +40,18 @@ import { TurnoDBRow, FilaTurnoExcel } from '../../types';
 export const HistorialDBView: React.FC = () => {
   const { session, setSession, showToast, catalogo } = useApp();
 
-  // Login form
+  // Login form (unauthenticated screen is strictly login-only)
   const [hdbUser, setHdbUser] = useState('');
   const [hdbPass, setHdbPass] = useState('');
   const [hdbLoginError, setHdbLoginError] = useState('');
-  const [modoAuthHdb, setModoAuthHdb] = useState<'login' | 'signup'>('login');
+
+  // Admin User Creation modal state (strictly accessible when admin is logged in)
+  const [modalCrearUsuario, setModalCrearUsuario] = useState(false);
+  const [nuevoUsuarioNombre, setNuevoUsuarioNombre] = useState('');
+  const [nuevoUsuarioPass, setNuevoUsuarioPass] = useState('');
+  const [nuevoUsuarioPassConf, setNuevoUsuarioPassConf] = useState('');
+  const [creandoUsuario, setCreandoUsuario] = useState(false);
+  const [errorCrearUsuario, setErrorCrearUsuario] = useState('');
 
   // Filters
   const [desde, setDesde] = useState('');
@@ -163,18 +172,51 @@ export const HistorialDBView: React.FC = () => {
       return;
     }
     try {
-      let s;
-      if (modoAuthHdb === 'signup') {
-        s = await sbSignUp(cfg, hdbUser, hdbPass);
-        showToast('ok', 'Cuenta creada e inicio de sesión exitoso');
-      } else {
-        s = await sbLogin(cfg, hdbUser, hdbPass);
-        showToast('ok', 'Sesión iniciada');
-      }
+      const s = await sbLogin(cfg, hdbUser, hdbPass);
+      showToast('ok', 'Sesión iniciada');
       setSession(s);
       setHdbPass('');
     } catch (err: any) {
       setHdbLoginError(err.message || 'Error de autenticación');
+    }
+  };
+
+  const handleAdminCrearUsuario = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!esAdmin) return;
+    setErrorCrearUsuario('');
+    const u = nuevoUsuarioNombre.trim();
+    const p = nuevoUsuarioPass.trim();
+    const pConf = nuevoUsuarioPassConf.trim();
+
+    if (!u) {
+      setErrorCrearUsuario('Ingresa el nombre de usuario o correo para la nueva cuenta');
+      return;
+    }
+    if (!p || p.length < 6) {
+      setErrorCrearUsuario('La contraseña debe tener al menos 6 caracteres');
+      return;
+    }
+    if (p !== pConf) {
+      setErrorCrearUsuario('Las contraseñas no coinciden');
+      return;
+    }
+
+    const cfg = getSupabaseConfig(false);
+    if (!cfg) return;
+
+    setCreandoUsuario(true);
+    try {
+      await sbAdminCrearUsuario(cfg, u, p);
+      showToast('ok', `Usuario "${u}" creado exitosamente.`);
+      setNuevoUsuarioNombre('');
+      setNuevoUsuarioPass('');
+      setNuevoUsuarioPassConf('');
+      setModalCrearUsuario(false);
+    } catch (err: any) {
+      setErrorCrearUsuario(err.message || 'Error al registrar usuario en Supabase');
+    } finally {
+      setCreandoUsuario(false);
     }
   };
 
@@ -616,7 +658,7 @@ export const HistorialDBView: React.FC = () => {
     }
   };
 
-  // If not logged in
+  // If not logged in: strictly login-only (account creation is hidden from public view and restricted to Admin)
   if (!session) {
     return (
       <div className="bg-[#1A202C] border border-[#2D3748] rounded-2xl p-6 sm:p-8 max-w-md mx-auto shadow-xl">
@@ -625,39 +667,21 @@ export const HistorialDBView: React.FC = () => {
             <History size={18} />
           </div>
           <h2 className="text-white text-base sm:text-lg font-bold font-['Oswald',sans-serif] tracking-wide uppercase m-0">
-            {modoAuthHdb === 'login' ? 'Acceso a Historial en la Nube' : 'Crear Cuenta en Supabase'}
+            Acceso a Historial en la Nube
           </h2>
         </div>
 
-        {/* Toggle Login vs Register */}
-        <div className="flex p-1 bg-[#12161F] rounded-xl border border-[#2D3748] mb-4">
-          <button
-            type="button"
-            onClick={() => {
-              setModoAuthHdb('login');
-              setHdbLoginError('');
-            }}
-            className={`flex-1 py-1.5 text-xs font-bold font-['Oswald',sans-serif] tracking-wider uppercase rounded-lg transition-colors cursor-pointer ${
-              modoAuthHdb === 'login' ? 'bg-[#F2A93B] text-[#12161F]' : 'text-[#A0AEC0] hover:text-white'
-            }`}
-          >
-            Iniciar Sesión
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setModoAuthHdb('signup');
-              setHdbLoginError('');
-            }}
-            className={`flex-1 py-1.5 text-xs font-bold font-['Oswald',sans-serif] tracking-wider uppercase rounded-lg transition-colors cursor-pointer ${
-              modoAuthHdb === 'signup' ? 'bg-[#F2A93B] text-[#12161F]' : 'text-[#A0AEC0] hover:text-white'
-            }`}
-          >
-            Crear Cuenta
-          </button>
-        </div>
+        <p className="text-xs text-[#CBD5E0] mb-5 leading-relaxed">
+          Ingresa con tus credenciales autorizadas para consultar registros y balances de producción en la base de datos de planta.
+        </p>
 
-        <div className="space-y-3.5 mb-5">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleLogin();
+          }}
+          className="space-y-4 mb-4"
+        >
           <div>
             <label className="block text-xs font-semibold text-[#CBD5E0] mb-1.5 uppercase tracking-wide">
               Usuario o Correo
@@ -668,6 +692,7 @@ export const HistorialDBView: React.FC = () => {
               onChange={(e) => setHdbUser(e.target.value)}
               placeholder="Ej. supervisor1 o usuario@correo.com"
               className="w-full py-3 px-3.5 rounded-xl border border-[#4A5568] text-base sm:text-sm bg-[#232A38] text-white outline-none focus:border-[#F2A93B] min-h-[46px]"
+              autoComplete="username"
             />
           </div>
           <div>
@@ -680,27 +705,29 @@ export const HistorialDBView: React.FC = () => {
               onChange={(e) => setHdbPass(e.target.value)}
               placeholder="Tu contraseña"
               className="w-full py-3 px-3.5 rounded-xl border border-[#4A5568] text-base sm:text-sm bg-[#232A38] text-white outline-none focus:border-[#F2A93B] min-h-[46px]"
+              autoComplete="current-password"
             />
           </div>
-        </div>
 
-        {hdbLoginError && (
-          <p className="text-[#E53E3E] text-xs mb-4 bg-[#E53E3E]/10 p-2.5 rounded-lg border border-[#E53E3E]/30 leading-snug">
-            {hdbLoginError}
+          {hdbLoginError && (
+            <p className="text-[#E53E3E] text-xs bg-[#E53E3E]/10 p-2.5 rounded-lg border border-[#E53E3E]/30 leading-snug m-0">
+              {hdbLoginError}
+            </p>
+          )}
+
+          <button
+            type="submit"
+            className="w-full bg-[#F2A93B] text-[#12161F] py-3.5 px-4 rounded-xl font-bold uppercase font-['Oswald',sans-serif] tracking-wider text-sm cursor-pointer hover:brightness-105 active:scale-95 transition-all shadow-md min-h-[48px]"
+          >
+            Iniciar Sesión
+          </button>
+        </form>
+
+        <div className="pt-3 border-t border-[#2D3748] text-center">
+          <p className="text-[11px] text-[#A0AEC0] m-0 leading-normal">
+            Por seguridad, la creación de nuevas cuentas está restringida exclusivamente al Administrador de Planta.
           </p>
-        )}
-
-        <button
-          type="button"
-          onClick={handleLogin}
-          className="w-full bg-[#F2A93B] text-[#12161F] py-3.5 px-4 rounded-xl font-bold uppercase font-['Oswald',sans-serif] tracking-wider text-sm cursor-pointer hover:brightness-105 active:scale-95 transition-all shadow-md min-h-[48px]"
-        >
-          {modoAuthHdb === 'login' ? 'Iniciar Sesión' : 'Registrar Cuenta'}
-        </button>
-
-        <p className="text-[11px] text-[#A0AEC0] mt-4 mb-0 text-center">
-          Ingresa tu usuario (ej. supervisor1) o correo completo.
-        </p>
+        </div>
       </div>
     );
   }
@@ -1288,13 +1315,31 @@ export const HistorialDBView: React.FC = () => {
           )}
 
           {esAdmin && (
-            <button
-              type="button"
-              onClick={abrirResumenVersiones}
-              className="bg-[#232A38] text-white border border-[#4A5568] py-2.5 px-3 rounded-xl text-xs sm:text-sm font-semibold cursor-pointer hover:bg-[#2D3748] active:scale-95 min-h-[42px]"
-            >
-              Control de Versiones (Admin)
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setErrorCrearUsuario('');
+                  setNuevoUsuarioNombre('');
+                  setNuevoUsuarioPass('');
+                  setNuevoUsuarioPassConf('');
+                  setModalCrearUsuario(true);
+                }}
+                className="bg-[#1F7A45]/30 text-[#48BB78] border border-[#38A169]/50 hover:bg-[#38A169]/30 py-2.5 px-3.5 rounded-xl text-xs sm:text-sm font-semibold cursor-pointer active:scale-95 min-h-[42px] flex items-center justify-center gap-1.5"
+                title="Crear nueva cuenta para operario o supervisor"
+              >
+                <UserPlus size={16} />
+                <span>Crear Cuenta (Admin)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={abrirResumenVersiones}
+                className="bg-[#232A38] text-white border border-[#4A5568] py-2.5 px-3 rounded-xl text-xs sm:text-sm font-semibold cursor-pointer hover:bg-[#2D3748] active:scale-95 min-h-[42px]"
+              >
+                Control de Versiones (Admin)
+              </button>
+            </>
           )}
         </div>
 
@@ -1710,6 +1755,109 @@ export const HistorialDBView: React.FC = () => {
                 Continuar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Crear Usuario / Operario (Exclusivo para Admin) */}
+      {modalCrearUsuario && esAdmin && (
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-3 sm:p-4 backdrop-blur-xs">
+          <div className="bg-[#1A202C] border border-[#2D3748] rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-[#2D3748] pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-[#38A169]/20 text-[#38A169] flex items-center justify-center">
+                  <UserPlus size={18} />
+                </div>
+                <div>
+                  <h3 className="text-white font-['Oswald',sans-serif] text-base sm:text-lg font-bold tracking-wide uppercase m-0 leading-tight">
+                    Crear Cuenta de Operario
+                  </h3>
+                  <span className="text-[10px] text-[#F6AD55] font-['IBM_Plex_Mono',monospace] font-bold">
+                    Acceso exclusivo de Administrador
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalCrearUsuario(false)}
+                className="text-[#A0AEC0] hover:text-white p-1 rounded-lg cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-xs text-[#CBD5E0] m-0 leading-relaxed">
+              Registra las credenciales para un nuevo supervisor u operario. La cuenta quedará habilitada inmediatamente para registrar turnos.
+            </p>
+
+            <form onSubmit={handleAdminCrearUsuario} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-[#CBD5E0] mb-1.5 uppercase tracking-wide">
+                  Nombre de Usuario o Correo
+                </label>
+                <input
+                  type="text"
+                  value={nuevoUsuarioNombre}
+                  onChange={(e) => setNuevoUsuarioNombre(e.target.value)}
+                  placeholder="ej: supervisor2 o juan@planta.com"
+                  className="w-full py-2.5 px-3.5 rounded-xl border border-[#4A5568] text-sm bg-[#232A38] text-white outline-none focus:border-[#F2A93B] min-h-[44px]"
+                  autoFocus
+                />
+                <p className="text-[10px] text-[#A0AEC0] mt-1 m-0">
+                  Si no contiene &apos;@&apos;, se generará automáticamente con el dominio de la planta.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[#CBD5E0] mb-1.5 uppercase tracking-wide">
+                  Contraseña Inicial
+                </label>
+                <input
+                  type="password"
+                  value={nuevoUsuarioPass}
+                  onChange={(e) => setNuevoUsuarioPass(e.target.value)}
+                  placeholder="Mínimo 6 caracteres"
+                  className="w-full py-2.5 px-3.5 rounded-xl border border-[#4A5568] text-sm bg-[#232A38] text-white outline-none focus:border-[#F2A93B] min-h-[44px]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[#CBD5E0] mb-1.5 uppercase tracking-wide">
+                  Confirmar Contraseña
+                </label>
+                <input
+                  type="password"
+                  value={nuevoUsuarioPassConf}
+                  onChange={(e) => setNuevoUsuarioPassConf(e.target.value)}
+                  placeholder="Repite la contraseña"
+                  className="w-full py-2.5 px-3.5 rounded-xl border border-[#4A5568] text-sm bg-[#232A38] text-white outline-none focus:border-[#F2A93B] min-h-[44px]"
+                />
+              </div>
+
+              {errorCrearUsuario && (
+                <p className="text-[#E53E3E] text-xs bg-[#E53E3E]/10 p-2.5 rounded-lg border border-[#E53E3E]/30 leading-snug m-0">
+                  {errorCrearUsuario}
+                </p>
+              )}
+
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  disabled={creandoUsuario}
+                  onClick={() => setModalCrearUsuario(false)}
+                  className="flex-1 bg-[#232A38] text-[#CBD5E0] hover:text-white py-2.5 px-4 rounded-xl text-xs sm:text-sm font-semibold border border-[#4A5568] cursor-pointer min-h-[42px]"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={creandoUsuario}
+                  className="flex-1 bg-[#38A169] hover:bg-[#2f855a] text-white py-2.5 px-4 rounded-xl text-xs sm:text-sm font-bold uppercase font-['Oswald',sans-serif] tracking-wider cursor-pointer shadow-md min-h-[42px] flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {creandoUsuario ? <span>Creando...</span> : <span>Crear Cuenta</span>}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -13,7 +13,7 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
 );
 
 // Service Worker (PWA offline & cache sync)
-if ('serviceWorker' in navigator) {
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
   let yaRecargo = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (yaRecargo) return;

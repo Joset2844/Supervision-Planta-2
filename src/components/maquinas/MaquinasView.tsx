@@ -16,7 +16,7 @@ export const MaquinasView: React.FC = () => {
   const [nombreInput, setNombreInput] = useState('');
   const [busqueda, setBusqueda] = useState('');
   const [panelAdminOpen, setPanelAdminOpen] = useState(false);
-  const [filtroArea, setFiltroArea] = useState<'todas' | 'activas' | 'vasos_envases' | 'papel_carton'>('todas');
+  const [filtroArea, setFiltroArea] = useState<'todas' | 'activas' | 'vasos_envases' | 'papel_carton' | 'no_asignadas'>('todas');
   const [actualizando, setActualizando] = useState(false);
 
   // Backup / Restore panels
@@ -33,6 +33,18 @@ export const MaquinasView: React.FC = () => {
 
   const activasCount = useMemo(() => {
     return maquinas.filter((m) => m.activa).length;
+  }, [maquinas]);
+
+  const vasosCount = useMemo(() => {
+    return maquinas.filter((m) => m.area === 'vasos_envases').length;
+  }, [maquinas]);
+
+  const papelCount = useMemo(() => {
+    return maquinas.filter((m) => m.area === 'papel_carton').length;
+  }, [maquinas]);
+
+  const noAsignadasCount = useMemo(() => {
+    return maquinas.filter((m) => !m.area || (m.area !== 'vasos_envases' && m.area !== 'papel_carton')).length;
   }, [maquinas]);
 
   const handleAgregarMaquinas = () => {
@@ -219,36 +231,70 @@ export const MaquinasView: React.FC = () => {
     }
   };
 
-  // Grouping, filtering and sorting
-  const maquinasFiltradas = useMemo(() => {
-    let list = maquinas;
-
-    if (filtroArea === 'activas') {
-      list = list.filter((m) => m.activa);
-    } else if (filtroArea !== 'todas') {
-      list = list.filter((m) => (m.area || '') === filtroArea);
-    }
-
+  // Grouping, filtering and sorting by category
+  const seccionGrupos = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
-    if (q) {
-      list = list.filter(
-        (m) =>
-          m.nombre.toLowerCase().includes(q) ||
-          (m.codigo && m.codigo.toLowerCase().includes(q))
+    const coincideBusqueda = (m: Maquina) => {
+      if (!q) return true;
+      return (
+        m.nombre.toLowerCase().includes(q) ||
+        (m.codigo && m.codigo.toLowerCase().includes(q))
       );
-    }
+    };
 
-    const getRango = (area: string) => (area === 'vasos_envases' ? 0 : area === 'papel_carton' ? 1 : 2);
+    const coincideEstado = (m: Maquina) => {
+      if (filtroArea === 'activas') return m.activa;
+      return true;
+    };
 
-    return [...list].sort((a, b) => {
-      if (filtroArea === 'todas') {
-        const ra = getRango(a.area);
-        const rb = getRango(b.area);
-        if (ra !== rb) return ra - rb;
-      }
-      return a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' });
-    });
-  }, [maquinas, filtroArea, busqueda]);
+    const candidatas = maquinas.filter((m) => coincideBusqueda(m) && coincideEstado(m));
+
+    const vasos = candidatas
+      .filter((m) => m.area === 'vasos_envases')
+      .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
+
+    const papel = candidatas
+      .filter((m) => m.area === 'papel_carton')
+      .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
+
+    const noAsignadas = candidatas
+      .filter((m) => !m.area || (m.area !== 'vasos_envases' && m.area !== 'papel_carton'))
+      .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
+
+    const secciones = [
+      {
+        id: 'vasos_envases' as const,
+        titulo: 'Vasos y Envases',
+        dotColor: 'bg-[#F2A93B]',
+        badgeColor: 'bg-[#F2A93B]/20 text-[#F6AD55] border border-[#F2A93B]/30',
+        maquinas: vasos,
+      },
+      {
+        id: 'papel_carton' as const,
+        titulo: 'Papel y Cartón',
+        dotColor: 'bg-[#63B3ED]',
+        badgeColor: 'bg-[#63B3ED]/20 text-[#63B3ED] border border-[#63B3ED]/30',
+        maquinas: papel,
+      },
+      {
+        id: 'no_asignadas' as const,
+        titulo: 'No Asignadas',
+        dotColor: 'bg-[#A0AEC0]',
+        badgeColor: 'bg-[#2D3748] text-[#CBD5E0] border border-[#4A5568]',
+        maquinas: noAsignadas,
+      },
+    ];
+
+    if (filtroArea === 'vasos_envases') return secciones.filter((s) => s.id === 'vasos_envases');
+    if (filtroArea === 'papel_carton') return secciones.filter((s) => s.id === 'papel_carton');
+    if (filtroArea === 'no_asignadas') return secciones.filter((s) => s.id === 'no_asignadas');
+
+    return secciones;
+  }, [maquinas, busqueda, filtroArea]);
+
+  const totalFiltradasCount = useMemo(() => {
+    return seccionGrupos.reduce((acc, s) => acc + s.maquinas.length, 0);
+  }, [seccionGrupos]);
 
   return (
     <div className="space-y-2.5 sm:space-y-3.5">
@@ -329,18 +375,29 @@ export const MaquinasView: React.FC = () => {
                   : 'bg-[#232A38] text-[#CBD5E0] hover:text-white border border-[#4A5568]/50'
               }`}
             >
-              Vasos y Envases
+              Vasos y Envases ({vasosCount})
             </button>
             <button
               type="button"
               onClick={() => setFiltroArea('papel_carton')}
               className={`py-1 px-2.5 rounded-lg text-xs font-bold cursor-pointer whitespace-nowrap transition-colors ${
                 filtroArea === 'papel_carton'
-                  ? 'bg-[#F2A93B] text-[#12161F] shadow-sm'
+                  ? 'bg-[#63B3ED] text-[#12161F] shadow-sm'
                   : 'bg-[#232A38] text-[#CBD5E0] hover:text-white border border-[#4A5568]/50'
               }`}
             >
-              Papel y Cartón
+              Papel y Cartón ({papelCount})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFiltroArea('no_asignadas')}
+              className={`py-1 px-2.5 rounded-lg text-xs font-bold cursor-pointer whitespace-nowrap transition-colors ${
+                filtroArea === 'no_asignadas'
+                  ? 'bg-[#CBD5E0] text-[#12161F] shadow-sm'
+                  : 'bg-[#232A38] text-[#CBD5E0] hover:text-white border border-[#4A5568]/50'
+              }`}
+            >
+              No Asignadas ({noAsignadasCount})
             </button>
           </div>
 
@@ -516,172 +573,207 @@ export const MaquinasView: React.FC = () => {
           {busqueda ? `Resultados para «${busqueda}»` : 'Toca ACTIVAR para enviar la máquina a Producción'}
         </span>
         <span className="font-['IBM_Plex_Mono',monospace] font-bold">
-          {maquinasFiltradas.length} de {maquinas.length}
+          {totalFiltradasCount} de {maquinas.length}
         </span>
       </div>
 
-      {/* Machines Compact Grid: Highly compact rows, 1 col mobile, 2 cols tablet, 3 cols desktop */}
-      {maquinasFiltradas.length === 0 ? (
+      {/* Machines Sections: Separated by Vasos y Envases, Papel y Cartón, No Asignadas, in a vertical single-column list (una sobre otra) */}
+      {totalFiltradasCount === 0 ? (
         <div className="border border-dashed border-[#4A5568] rounded-xl p-6 text-center text-xs sm:text-sm text-[#CBD5E0] bg-[#1A202C]">
           {busqueda ? `No se encontraron máquinas con el término «${busqueda}».` : 'No hay máquinas registradas en este filtro.'}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
-          {maquinasFiltradas.map((m) => {
-            const esPP = m.tipoProducto === 'pp';
-            const esPT = m.tipoProducto === 'pt';
+        <div className="space-y-4">
+          {seccionGrupos.map((seccion) => {
+            if (seccion.maquinas.length === 0) return null;
+            const activasEnSeccion = seccion.maquinas.filter((m) => m.activa).length;
 
             return (
-              <div
-                key={m.id}
-                onDoubleClick={(e) => handleToggleLockCard(m.id, e)}
-                className={`rounded-xl border p-2 sm:p-2.5 transition-all flex flex-col justify-between gap-1.5 shadow-sm ${
-                  m.activa
-                    ? 'bg-[#182335] border-[#38A169]/70 ring-1 ring-[#38A169]/30 shadow-[#38A169]/5'
-                    : 'bg-[#1A202C] border-[#2D3748] hover:border-[#4A5568]'
-                }`}
-              >
-                {/* Row 1: Direct 1-tap activation, Name, Code, Lock & Delete */}
-                <div className="flex items-center justify-between gap-1.5">
-                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                    {/* Instant 1-tap Activar/Activa toggle button */}
-                    <button
-                      type="button"
-                      onClick={() => handleUpdateMaquina(m.id, { activa: !m.activa })}
-                      className={`py-1 px-2 rounded-lg text-[11px] font-bold font-['Oswald',sans-serif] tracking-wider cursor-pointer transition-all flex items-center gap-1.5 shrink-0 ${
-                        m.activa
-                          ? 'bg-[#38A169] text-white shadow-sm shadow-[#38A169]/40 hover:brightness-105 active:scale-95'
-                          : 'bg-[#232A38] text-[#CBD5E0] border border-[#4A5568] hover:text-white hover:bg-[#2D3748] active:scale-95'
-                      }`}
-                      title={m.activa ? 'Desactivar máquina' : 'Activar máquina para Producción'}
-                    >
-                      <span className={`w-2 h-2 rounded-full ${m.activa ? 'bg-white animate-pulse' : 'bg-[#718096]'}`} />
-                      <span>{m.activa ? 'ACTIVA' : 'ACTIVAR'}</span>
-                    </button>
-
-                    {/* Machine Name and Code */}
-                    <div className="flex items-baseline gap-1.5 min-w-0 truncate">
-                      <span className="font-['IBM_Plex_Mono',monospace] font-bold text-xs sm:text-sm text-white truncate">
-                        {m.nombre}
-                      </span>
-                      {m.codigo && (
-                        <span className="text-[10px] font-['IBM_Plex_Mono',monospace] font-bold text-[#A0AEC0] bg-[#232A38] px-1.5 py-0.2 rounded border border-[#4A5568]/50 shrink-0">
-                          {m.codigo}
-                        </span>
-                      )}
-                    </div>
+              <div key={seccion.id} className="space-y-2">
+                {/* Section Separation Banner */}
+                <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-[#1A202C] border border-[#2D3748] shadow-sm">
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2.5 h-2.5 rounded-full ${seccion.dotColor} shrink-0`} />
+                    <h2 className="font-['Oswald',sans-serif] text-sm sm:text-base font-bold text-white tracking-wide uppercase">
+                      {seccion.titulo}
+                    </h2>
+                    <span className={`text-[10.5px] font-semibold px-2 py-0.5 rounded-md ${seccion.badgeColor}`}>
+                      {seccion.maquinas.length} {seccion.maquinas.length === 1 ? 'máquina' : 'máquinas'}
+                    </span>
                   </div>
-
-                  {/* Lock icon & Trash */}
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => handleToggleLockCard(m.id)}
-                      className={`p-1 rounded cursor-pointer transition-colors ${
-                        m.bloqueada
-                          ? 'text-[#F6AD55] hover:text-[#FBD38D]'
-                          : 'text-[#718096] hover:text-[#CBD5E0]'
-                      }`}
-                      title={m.bloqueada ? 'Máquina bloqueada (doble clic para editar datos)' : 'Máquina desbloqueada (clic para bloquear)'}
-                    >
-                      {m.bloqueada ? <Lock size={13} /> : <Unlock size={13} />}
-                    </button>
-                    {!m.bloqueada && (
-                      <button
-                        type="button"
-                        onClick={() => handleEliminarMaquina(m.id)}
-                        className="p-1 text-[#E53E3E] hover:bg-[#E53E3E]/20 rounded cursor-pointer"
-                        title="Eliminar máquina"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    )}
+                  <div className="text-xs text-[#CBD5E0] font-['IBM_Plex_Mono',monospace]">
+                    <span className="text-[#38A169] font-bold">{activasEnSeccion}</span> activas
                   </div>
                 </div>
 
-                {/* Row 2: Compact configuration row (Area, Code edit if unlocked, PP/PT, Multi-OP) */}
-                <div className="flex items-center justify-between gap-1.5 flex-wrap pt-1 border-t border-[#2D3748]/60 text-[11px]">
-                  {/* Left: Area & Code editor when unlocked */}
-                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                    {m.bloqueada ? (
-                      <span className="text-[10px] font-medium text-[#A0AEC0] truncate">
-                        {m.area === 'vasos_envases' ? 'Vasos y Env.' : m.area === 'papel_carton' ? 'Papel y Cart.' : 'Sin área'}
-                      </span>
-                    ) : (
-                      <div className="flex items-center gap-1">
-                        <select
-                          value={m.area || ''}
-                          onChange={(e) => handleUpdateMaquina(m.id, { area: e.target.value as any })}
-                          className="py-0.5 px-1 rounded border border-[#4A5568] text-[10px] bg-[#232A38] text-[#CBD5E0] outline-none"
-                        >
-                          <option value="">Sin área</option>
-                          <option value="vasos_envases">Vasos</option>
-                          <option value="papel_carton">Papel</option>
-                        </select>
-                        <input
-                          type="text"
-                          value={m.codigo || ''}
-                          onChange={(e) => handleUpdateMaquina(m.id, { codigo: e.target.value.trim() })}
-                          placeholder="Cód."
-                          className="w-14 py-0.5 px-1 rounded border border-[#4A5568] text-[10px] font-['IBM_Plex_Mono',monospace] bg-[#232A38] text-white outline-none"
-                        />
+                {/* Vertical Stack: Una sobre otra */}
+                <div className="flex flex-col gap-2">
+                  {seccion.maquinas.map((m) => {
+                    const esPP = m.tipoProducto === 'pp';
+                    const esPT = m.tipoProducto === 'pt';
+
+                    return (
+                      <div
+                        key={m.id}
+                        onDoubleClick={(e) => handleToggleLockCard(m.id, e)}
+                        className={`rounded-xl border p-2.5 sm:px-4 sm:py-3 transition-all flex flex-col md:flex-row md:items-center justify-between gap-2.5 shadow-sm ${
+                          m.activa
+                            ? 'bg-[#182335] border-[#38A169]/70 ring-1 ring-[#38A169]/30 shadow-[#38A169]/5'
+                            : 'bg-[#1A202C] border-[#2D3748] hover:border-[#4A5568]'
+                        }`}
+                      >
+                        {/* Left / Main info */}
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1 flex-wrap sm:flex-nowrap">
+                          {/* 1-tap Activation */}
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateMaquina(m.id, { activa: !m.activa })}
+                            className={`py-1.5 px-3 rounded-lg text-[11px] sm:text-xs font-bold font-['Oswald',sans-serif] tracking-wider cursor-pointer transition-all flex items-center gap-1.5 shrink-0 ${
+                              m.activa
+                                ? 'bg-[#38A169] text-white shadow-sm shadow-[#38A169]/40 hover:brightness-105 active:scale-95'
+                                : 'bg-[#232A38] text-[#CBD5E0] border border-[#4A5568] hover:text-white hover:bg-[#2D3748] active:scale-95'
+                            }`}
+                            title={m.activa ? 'Desactivar máquina' : 'Activar máquina para Producción'}
+                          >
+                            <span className={`w-2 h-2 rounded-full ${m.activa ? 'bg-white animate-pulse' : 'bg-[#718096]'}`} />
+                            <span>{m.activa ? 'ACTIVA' : 'ACTIVAR'}</span>
+                          </button>
+
+                          {/* Machine Name and Code */}
+                          <div className="flex items-baseline gap-2 min-w-0">
+                            <span className="font-['IBM_Plex_Mono',monospace] font-bold text-xs sm:text-base text-white truncate">
+                              {m.nombre}
+                            </span>
+                            {m.codigo && m.bloqueada && (
+                              <span className="text-[11px] font-['IBM_Plex_Mono',monospace] font-bold text-[#A0AEC0] bg-[#232A38] px-2 py-0.5 rounded border border-[#4A5568]/60 shrink-0">
+                                {m.codigo}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Area & Code edit (or badge when locked) */}
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {m.bloqueada ? (
+                              <span className="text-[10px] sm:text-[11px] font-medium text-[#A0AEC0] bg-[#232A38]/90 px-2 py-0.5 rounded border border-[#2D3748]">
+                                {m.area === 'vasos_envases'
+                                  ? 'Vasos y Env.'
+                                  : m.area === 'papel_carton'
+                                  ? 'Papel y Cart.'
+                                  : 'Sin área'}
+                              </span>
+                            ) : (
+                              <div className="flex items-center gap-1.5">
+                                <select
+                                  value={m.area || ''}
+                                  onChange={(e) => handleUpdateMaquina(m.id, { area: e.target.value as any })}
+                                  className="py-1 px-2 rounded-lg border border-[#4A5568] text-xs bg-[#232A38] text-[#CBD5E0] outline-none focus:border-[#F2A93B]"
+                                  title="Área"
+                                >
+                                  <option value="">Sin área</option>
+                                  <option value="vasos_envases">Vasos</option>
+                                  <option value="papel_carton">Papel</option>
+                                </select>
+                                <input
+                                  type="text"
+                                  value={m.codigo || ''}
+                                  onChange={(e) => handleUpdateMaquina(m.id, { codigo: e.target.value.trim() })}
+                                  placeholder="Cód."
+                                  title="Código de máquina"
+                                  className="w-16 sm:w-20 py-1 px-2 rounded-lg border border-[#4A5568] text-xs font-['IBM_Plex_Mono',monospace] bg-[#232A38] text-white outline-none focus:border-[#F2A93B]"
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Right: Chips, Multi-OP, Lock & Trash */}
+                        <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0 pt-1.5 sm:pt-0 border-t sm:border-t-0 border-[#2D3748]/60">
+                          {/* PP / PT toggle chips */}
+                          <div className="flex p-0.5 bg-[#232A38] rounded-lg border border-[#4A5568]/60">
+                            <button
+                              type="button"
+                              disabled={m.bloqueada}
+                              onClick={() => handleUpdateMaquina(m.id, { tipoProducto: esPP ? '' : 'pp' })}
+                              className={`py-1 px-2 rounded-md text-[10.5px] sm:text-[11px] font-bold cursor-pointer transition-all ${
+                                esPP ? 'bg-[#F2A93B] text-[#12161F] shadow-sm' : 'text-[#CBD5E0] hover:text-white'
+                              } ${m.bloqueada ? 'opacity-60 cursor-default' : ''}`}
+                              title="Producto en Proceso"
+                            >
+                              PP
+                            </button>
+                            <button
+                              type="button"
+                              disabled={m.bloqueada}
+                              onClick={() => handleUpdateMaquina(m.id, { tipoProducto: esPT ? '' : 'pt' })}
+                              className={`py-1 px-2 rounded-md text-[10.5px] sm:text-[11px] font-bold cursor-pointer transition-all ${
+                                esPT ? 'bg-[#63B3ED] text-[#12161F] shadow-sm' : 'text-[#CBD5E0] hover:text-white'
+                              } ${m.bloqueada ? 'opacity-60 cursor-default' : ''}`}
+                              title="Producto Terminado"
+                            >
+                              PT
+                            </button>
+                          </div>
+
+                          {/* Multi-OP toggle */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!m.multiOp) {
+                                handleUpdateMaquina(m.id, { multiOp: true });
+                                showToast('ok', `Multi-OP activado en ${m.nombre}`);
+                              } else {
+                                const n = turno.filter((x) => x.maquinaId === m.id).length;
+                                if (n > 1) {
+                                  showToast('error', `Primero quita las tarjetas adicionales en Producción (hay ${n})`);
+                                  return;
+                                }
+                                handleUpdateMaquina(m.id, { multiOp: false });
+                                showToast('ok', `Multi-OP desactivado en ${m.nombre}`);
+                              }
+                            }}
+                            title="Multi-OP: Permite asignar varias OP a la vez a esta máquina"
+                            className={`py-1 px-2 sm:px-2.5 rounded-lg text-[10.5px] sm:text-[11px] font-bold cursor-pointer border transition-all ${
+                              m.multiOp
+                                ? 'bg-[#F2A93B] text-[#12161F] border-[#F2A93B] shadow-sm font-black'
+                                : 'bg-[#232A38] text-[#CBD5E0] border-[#4A5568]/60 hover:text-white'
+                            }`}
+                          >
+                            Multi-OP
+                          </button>
+
+                          {/* Lock icon & Trash */}
+                          <div className="flex items-center gap-1 pl-1 border-l border-[#2D3748]">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleLockCard(m.id)}
+                              className={`p-1.5 rounded-lg cursor-pointer transition-colors ${
+                                m.bloqueada
+                                  ? 'text-[#F6AD55] hover:text-[#FBD38D] bg-[#232A38]'
+                                  : 'text-[#718096] hover:text-[#CBD5E0]'
+                              }`}
+                              title={
+                                m.bloqueada
+                                  ? 'Máquina bloqueada (doble clic para editar datos)'
+                                  : 'Máquina desbloqueada (clic para bloquear)'
+                              }
+                            >
+                              {m.bloqueada ? <Lock size={14} /> : <Unlock size={14} />}
+                            </button>
+                            {!m.bloqueada && (
+                              <button
+                                type="button"
+                                onClick={() => handleEliminarMaquina(m.id)}
+                                className="p-1.5 text-[#E53E3E] hover:bg-[#E53E3E]/20 rounded-lg cursor-pointer"
+                                title="Eliminar máquina"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                    )}
-                  </div>
-
-                  {/* Right: PP/PT chips and Multi-OP button */}
-                  <div className="flex items-center gap-1 shrink-0">
-                    <div className="flex p-0.5 bg-[#232A38] rounded border border-[#4A5568]/60">
-                      <button
-                        type="button"
-                        disabled={m.bloqueada}
-                        onClick={() => handleUpdateMaquina(m.id, { tipoProducto: esPP ? '' : 'pp' })}
-                        className={`py-0.5 px-1.5 rounded text-[10px] font-bold cursor-pointer transition-all ${
-                          esPP ? 'bg-[#F2A93B] text-[#12161F] shadow-sm' : 'text-[#CBD5E0] hover:text-white'
-                        } ${m.bloqueada ? 'opacity-60 cursor-default' : ''}`}
-                        title="Producto en Proceso"
-                      >
-                        PP
-                      </button>
-                      <button
-                        type="button"
-                        disabled={m.bloqueada}
-                        onClick={() => handleUpdateMaquina(m.id, { tipoProducto: esPT ? '' : 'pt' })}
-                        className={`py-0.5 px-1.5 rounded text-[10px] font-bold cursor-pointer transition-all ${
-                          esPT ? 'bg-[#63B3ED] text-[#12161F] shadow-sm' : 'text-[#CBD5E0] hover:text-white'
-                        } ${m.bloqueada ? 'opacity-60 cursor-default' : ''}`}
-                        title="Producto Terminado"
-                      >
-                        PT
-                      </button>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!m.multiOp) {
-                          handleUpdateMaquina(m.id, { multiOp: true });
-                          showToast('ok', `Multi-OP activado en ${m.nombre}`);
-                        } else {
-                          const n = turno.filter((x) => x.maquinaId === m.id).length;
-                          if (n > 1) {
-                            showToast('error', `Primero quita las tarjetas adicionales en Producción (hay ${n})`);
-                            return;
-                          }
-                          handleUpdateMaquina(m.id, { multiOp: false });
-                          showToast('ok', `Multi-OP desactivado en ${m.nombre}`);
-                        }
-                      }}
-                      title="Multi-OP: Permite asignar varias OP a la vez a esta máquina"
-                      className={`py-0.5 px-1.5 rounded text-[10px] font-bold cursor-pointer border transition-all ${
-                        m.multiOp
-                          ? 'bg-[#F2A93B] text-[#12161F] border-[#F2A93B] shadow-sm font-black'
-                          : 'bg-[#232A38] text-[#CBD5E0] border-[#4A5568]/60 hover:text-white'
-                      }`}
-                    >
-                      Multi-OP
-                    </button>
-                  </div>
+                    );
+                  })}
                 </div>
               </div>
             );

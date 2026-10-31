@@ -155,10 +155,7 @@ export const ProduccionView: React.FC = () => {
   };
 
   const toggleExpand = (clave: string) => {
-    setExpandidos((prev) => ({
-      ...prev,
-      [clave]: !prev[clave],
-    }));
+    setExpandidos((prev) => (prev[clave] ? {} : { [clave]: true }));
   };
 
   // Add production record to a machine instance
@@ -243,7 +240,7 @@ export const ProduccionView: React.FC = () => {
         registros: [],
       },
     ]);
-    setExpandidos((prev) => ({ ...prev, [nuevaClave]: true }));
+    setExpandidos({ [nuevaClave]: true });
     showToast('ok', `Nueva tarjeta ${m.nombre}(${sig}) agregada`);
   };
 

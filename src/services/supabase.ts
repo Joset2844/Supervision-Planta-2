@@ -10,8 +10,8 @@ export function getSupabaseConfig(forcePrompt = false): SupabaseConfig | null {
   let url = '';
   let key = '';
   try {
-    url = localStorage.getItem(STORAGE_KEYS.SB_URL) || DEFAULT_SB_URL;
-    key = localStorage.getItem(STORAGE_KEYS.SB_KEY) || DEFAULT_SB_KEY;
+    url = localStorage.getItem(STORAGE_KEYS.SB_URL) || (import.meta.env.VITE_SUPABASE_URL as string) || DEFAULT_SB_URL;
+    key = localStorage.getItem(STORAGE_KEYS.SB_KEY) || (import.meta.env.VITE_SUPABASE_ANON_KEY as string) || DEFAULT_SB_KEY;
   } catch {}
 
   if (forcePrompt || !url || !key) {

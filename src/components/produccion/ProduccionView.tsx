@@ -43,7 +43,7 @@ import {
   generarReporteActivacion,
   copiarAlPortapapeles,
 } from '../../services/reports';
-import { getSupabaseConfig, sbLogin } from '../../services/supabase';
+import { getSupabaseConfig, sbLogin, sbSignUp } from '../../services/supabase';
 import { Maquina, TurnoMaquina, RegistroTurno } from '../../types';
 
 const MOTIVOS_PARADA = ['Mantenimiento', 'Falta de personal', 'Desglose', 'Calibración'];
@@ -75,6 +75,18 @@ export const ProduccionView: React.FC = () => {
   const [textoRespaldo, setTextoRespaldo] = useState('');
   const [textoRestaurar, setTextoRestaurar] = useState('');
   const [reportesAbiertosMobile, setReportesAbiertosMobile] = useState(false);
+
+  // DB save & auth states
+  const [guardandoDB, setGuardandoDB] = useState(false);
+  const [authModo, setAuthModo] = useState<'login' | 'signup'>('login');
+  const [confirmarReemplazoData, setConfirmarReemplazoData] = useState<{
+    fecha: string;
+    tipo: string;
+    etiqueta: string;
+    totalExistente: number;
+    totalNuevo: number;
+    filasCount: number;
+  } | null>(null);
 
   // Login form
   const [loginEmail, setLoginEmail] = useState('');
@@ -345,23 +357,51 @@ export const ProduccionView: React.FC = () => {
     window.open(url, '_blank', 'noopener');
   };
 
-  // Login handler
+  // Guardar en Base de Datos Supabase
+  const handleGuardarDBClick = async (forzar = false) => {
+    if (!session) {
+      setPanelLoginOpen(true);
+      showToast('error', 'Inicia sesión para subir los datos a la nube');
+      return;
+    }
+    setGuardandoDB(true);
+    try {
+      const res = await guardarTurnoDB(undefined, forzar);
+      if (res && res.requiereConfirmacion && res.existenteInfo) {
+        setConfirmarReemplazoData(res.existenteInfo);
+      } else {
+        setConfirmarReemplazoData(null);
+      }
+    } catch (err: any) {
+      console.error('Error al ejecutar guardarTurnoDB:', err);
+    } finally {
+      setGuardandoDB(false);
+    }
+  };
+
+  // Login & Signup handler
   const handleConfirmLogin = async () => {
     const cfg = getSupabaseConfig(false);
     if (!cfg) return;
     setLoginError('');
     if (!loginEmail || !loginPass) {
-      setLoginError('Ingresa correo y contraseña');
+      setLoginError('Ingresa usuario o correo y contraseña');
       return;
     }
     try {
-      const s = await sbLogin(cfg, loginEmail, loginPass);
+      let s;
+      if (authModo === 'signup') {
+        s = await sbSignUp(cfg, loginEmail, loginPass);
+        showToast('ok', 'Cuenta creada e inicio de sesión exitoso');
+      } else {
+        s = await sbLogin(cfg, loginEmail, loginPass);
+        showToast('ok', 'Sesión iniciada');
+      }
       setSession(s);
       setPanelLoginOpen(false);
       setLoginPass('');
-      showToast('ok', 'Sesión iniciada');
     } catch (err: any) {
-      setLoginError(err.message || 'Error al iniciar sesión');
+      setLoginError(err.message || 'Error de autenticación');
     }
   };
 
@@ -483,18 +523,14 @@ export const ProduccionView: React.FC = () => {
         <div className="pt-2 border-t border-[#2D3748] flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
           <button
             type="button"
-            onClick={() => {
-              if (!session) {
-                setPanelLoginOpen(true);
-                showToast('error', 'Inicia sesión para subir los datos a la nube');
-                return;
-              }
-              guardarTurnoDB();
-            }}
-            className="flex items-center gap-1.5 bg-[#F2A93B] text-[#12161F] py-1.5 px-3 rounded-lg text-xs font-bold uppercase font-['Oswald',sans-serif] tracking-wider whitespace-nowrap hover:brightness-105 active:scale-95 transition-all shadow-sm shrink-0"
+            disabled={guardandoDB}
+            onClick={() => handleGuardarDBClick(false)}
+            className={`flex items-center gap-1.5 bg-[#F2A93B] text-[#12161F] py-1.5 px-3 rounded-lg text-xs font-bold uppercase font-['Oswald',sans-serif] tracking-wider whitespace-nowrap hover:brightness-105 active:scale-95 transition-all shadow-sm shrink-0 ${
+              guardandoDB ? 'opacity-75 cursor-wait' : 'cursor-pointer'
+            }`}
           >
-            <Save size={13} />
-            <span>Guardar DB</span>
+            <Save size={13} className={guardandoDB ? 'animate-bounce' : ''} />
+            <span>{guardandoDB ? 'Guardando...' : 'Guardar DB'}</span>
           </button>
           <button
             type="button"
@@ -524,44 +560,156 @@ export const ProduccionView: React.FC = () => {
         </div>
       </div>
 
-      {/* Supabase Login Modal Drawer */}
+      {/* Supabase Login / Signup Modal */}
       {panelLoginOpen && (
-        <div className="bg-[#1A202C] border border-[#2D3748] rounded-xl p-3.5 shadow-xl">
-          <p className="text-xs font-bold m-0 mb-2 text-white uppercase font-['Oswald',sans-serif] tracking-wider">
-            Iniciar Sesión
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
-            <input
-              type="text"
-              value={loginEmail}
-              onChange={(e) => setLoginEmail(e.target.value)}
-              placeholder="Usuario (sin @)"
-              className="py-1.5 px-2.5 rounded-lg border border-[#4A5568] text-sm bg-[#232A38] text-white"
-            />
-            <input
-              type="password"
-              value={loginPass}
-              onChange={(e) => setLoginPass(e.target.value)}
-              placeholder="Contraseña"
-              className="py-1.5 px-2.5 rounded-lg border border-[#4A5568] text-sm bg-[#232A38] text-white"
-            />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs">
+          <div className="bg-[#1A202C] border border-[#2D3748] rounded-2xl p-5 max-w-sm w-full shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-[#2D3748] pb-2.5">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-[#F2A93B]" />
+                <h3 className="text-sm font-bold m-0 text-white uppercase font-['Oswald',sans-serif] tracking-wider">
+                  {authModo === 'login' ? 'Iniciar Sesión en Supabase' : 'Crear Cuenta en Supabase'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPanelLoginOpen(false)}
+                className="text-[#A0AEC0] hover:text-white p-1 rounded-lg cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Toggle Login vs Register */}
+            <div className="flex p-1 bg-[#12161F] rounded-xl border border-[#2D3748]">
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthModo('login');
+                  setLoginError('');
+                }}
+                className={`flex-1 py-1.5 text-xs font-bold font-['Oswald',sans-serif] tracking-wider uppercase rounded-lg transition-colors cursor-pointer ${
+                  authModo === 'login' ? 'bg-[#F2A93B] text-[#12161F]' : 'text-[#A0AEC0] hover:text-white'
+                }`}
+              >
+                Ingresar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthModo('signup');
+                  setLoginError('');
+                }}
+                className={`flex-1 py-1.5 text-xs font-bold font-['Oswald',sans-serif] tracking-wider uppercase rounded-lg transition-colors cursor-pointer ${
+                  authModo === 'signup' ? 'bg-[#F2A93B] text-[#12161F]' : 'text-[#A0AEC0] hover:text-white'
+                }`}
+              >
+                Registrar
+              </button>
+            </div>
+
+            <div className="space-y-2.5">
+              <div>
+                <label className="block text-[11px] font-semibold text-[#CBD5E0] mb-1">
+                  Usuario o Correo
+                </label>
+                <input
+                  type="text"
+                  value={loginEmail}
+                  onChange={(e) => setLoginEmail(e.target.value)}
+                  placeholder="ej: supervisor1 o usuario@correo.com"
+                  className="w-full py-2 px-3 rounded-xl border border-[#4A5568] text-xs bg-[#232A38] text-white outline-none focus:border-[#F2A93B]"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-[#CBD5E0] mb-1">
+                  Contraseña
+                </label>
+                <input
+                  type="password"
+                  value={loginPass}
+                  onChange={(e) => setLoginPass(e.target.value)}
+                  placeholder="Tu contraseña"
+                  className="w-full py-2 px-3 rounded-xl border border-[#4A5568] text-xs bg-[#232A38] text-white outline-none focus:border-[#F2A93B]"
+                />
+              </div>
+            </div>
+
+            {loginError && (
+              <p className="text-[#E53E3E] text-xs m-0 bg-[#E53E3E]/10 p-2.5 rounded-lg border border-[#E53E3E]/30 leading-snug">
+                {loginError}
+              </p>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleConfirmLogin}
+                className="flex-1 bg-[#F2A93B] text-[#12161F] py-2.5 px-3 rounded-xl text-xs font-bold uppercase font-['Oswald',sans-serif] tracking-wider cursor-pointer hover:brightness-105 active:scale-95 transition-all shadow-sm"
+              >
+                {authModo === 'login' ? 'Iniciar Sesión' : 'Crear Cuenta'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setPanelLoginOpen(false)}
+                className="border border-[#4A5568] text-[#CBD5E0] hover:text-white py-2.5 px-4 rounded-xl text-xs font-semibold cursor-pointer"
+              >
+                Cerrar
+              </button>
+            </div>
           </div>
-          {loginError && <p className="text-[#E53E3E] text-xs m-0 mb-2">{loginError}</p>}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={handleConfirmLogin}
-              className="flex-1 bg-[#F2A93B] text-[#12161F] py-1.5 px-3 rounded-lg text-xs font-bold uppercase font-['Oswald',sans-serif]"
-            >
-              Ingresar
-            </button>
-            <button
-              type="button"
-              onClick={() => setPanelLoginOpen(false)}
-              className="border border-[#4A5568] text-white py-1.5 px-3 rounded-lg text-xs"
-            >
-              Cerrar
-            </button>
+        </div>
+      )}
+
+      {/* In-app Replace Confirmation Modal */}
+      {confirmarReemplazoData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs">
+          <div className="bg-[#1A202C] border border-[#2D3748] rounded-2xl p-5 max-w-md w-full shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-[#F2A93B]/20 flex items-center justify-center text-[#F2A93B] shrink-0">
+                <Save size={18} />
+              </div>
+              <h3 className="font-['Oswald',sans-serif] text-base font-bold text-white uppercase tracking-wide">
+                Turno ya registrado en la BD
+              </h3>
+            </div>
+
+            <div className="text-xs text-[#CBD5E0] space-y-2 leading-relaxed">
+              <p>
+                Ya existe un registro para <strong className="text-white">{confirmarReemplazoData.etiqueta}</strong> con{' '}
+                <strong className="text-[#F6AD55] font-['IBM_Plex_Mono',monospace]">
+                  {confirmarReemplazoData.totalExistente.toLocaleString('es-PE')} u
+                </strong>.
+              </p>
+              <p>
+                ¿Deseas reemplazarlo con la producción actual ({confirmarReemplazoData.filasCount} máquinas/registros,{' '}
+                <strong className="text-[#38A169] font-['IBM_Plex_Mono',monospace]">
+                  {confirmarReemplazoData.totalNuevo.toLocaleString('es-PE')} u
+                </strong>)?
+              </p>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                disabled={guardandoDB}
+                onClick={() => {
+                  setConfirmarReemplazoData(null);
+                  handleGuardarDBClick(true);
+                }}
+                className="flex-1 bg-[#F2A93B] text-[#12161F] py-2.5 px-3 rounded-xl text-xs font-bold uppercase font-['Oswald',sans-serif] tracking-wider cursor-pointer hover:brightness-105 active:scale-95 transition-all shadow-sm"
+              >
+                {guardandoDB ? 'Reemplazando...' : 'Sí, Reemplazar'}
+              </button>
+              <button
+                type="button"
+                disabled={guardandoDB}
+                onClick={() => setConfirmarReemplazoData(null)}
+                className="py-2.5 px-4 rounded-xl border border-[#4A5568] text-[#CBD5E0] hover:text-white text-xs font-semibold cursor-pointer"
+              >
+                Cancelar
+              </button>
+            </div>
           </div>
         </div>
       )}

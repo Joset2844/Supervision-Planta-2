@@ -61,7 +61,7 @@ interface AppContextType {
   sincronizarCatalogoSupabase: () => Promise<number>;
   subirCatalogoASupabase: (nuevo: CatalogoItem[]) => Promise<void>;
   reiniciarTurno: () => void;
-  guardarTurnoDB: (filasPersonalizadas?: FilaTurnoExcel[]) => Promise<void>;
+  guardarTurnoDB: (filasPersonalizadas?: FilaTurnoExcel[], forzarReemplazo?: boolean) => Promise<{ requiereConfirmacion?: boolean; existenteInfo?: any } | void>;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -377,7 +377,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Save active shift to Supabase
   const guardarTurnoDB = useCallback(
-    async (filasPersonalizadas?: FilaTurnoExcel[]) => {
+    async (filasPersonalizadas?: FilaTurnoExcel[], forzarReemplazo = false): Promise<{ requiereConfirmacion?: boolean; existenteInfo?: any } | void> => {
       if (!session) {
         showToast('error', 'Inicia sesión para subir los datos a la nube');
         return;
@@ -403,45 +403,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : d;
       };
       const etiqueta = `${formatearFecha(fecha)} - ${tipo === 'noche' ? 'Turno Noche' : 'Turno Día'}`;
-      const turnoEsperadoAhora = () => {
-        const ahoraDate = new Date();
-        const h = ahoraDate.getHours();
-        const tipoEsp = h >= 7 && h < 19 ? 'dia' : 'noche';
-        const base = new Date(ahoraDate.getTime());
-        if (h < 7) base.setDate(base.getDate() - 1);
-        const fechaEsp = `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, '0')}-${String(
-          base.getDate()
-        ).padStart(2, '0')}`;
-        return { fecha: fechaEsp, tipo: tipoEsp };
-      };
-
-      const advertenciaTurnoDescuadrado = (f: string, tp: string) => {
-        const esp = turnoEsperadoAhora();
-        if (f === esp.fecha && tp === esp.tipo) return '';
-        const etq = (tVal: string) => (tVal === 'noche' ? 'Turno Noche' : 'Turno Día');
-        return (
-          '⚠️ ATENCIÓN: la fecha/turno NO coincide con la hora actual.\n\n' +
-          'Vas a guardar:  ' +
-          formatearFecha(f) +
-          ' - ' +
-          etq(tp) +
-          '\n' +
-          'Ahora corresponde:  ' +
-          formatearFecha(esp.fecha) +
-          ' - ' +
-          etq(esp.tipo) +
-          '\n\n' +
-          'Este sería el PRIMER registro de ese turno. Si lo guardas, la persona a quien sí le corresponde no podrá registrarlo (solo el admin puede liberarlo).\n\n' +
-          '¿Guardar de todas formas?'
-        );
-      };
-
       const ahora = new Date().toISOString();
 
       try {
         const ex: any[] = await sbFetch(cfg, `turnos?select=*&fecha=eq.${fecha}&tipo=eq.${tipo}`, undefined, session);
         const existente = ex && ex[0];
-        if (existente) {
+        if (existente && !forzarReemplazo) {
           const esAdmin = session.usuario === 'admin';
           const duenio = !!existente.created_by_email && existente.created_by_email === session.email;
           if (!esAdmin && !duenio) {
@@ -454,36 +421,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             return;
           }
 
-          if (
-            !window.confirm(
-              `⚠ Ya existe ${etiqueta}: ${totalFilas(existente.filas)} u.\nSe REEMPLAZARÁ por ${totalFilas(
-                filas
-              )} u (${filas.length} filas).\n\n¿Confirmas?`
-            )
-          ) {
-            return;
-          }
+          // Return notice so UI displays custom modal instead of failing native window.confirm
+          return {
+            requiereConfirmacion: true,
+            existenteInfo: {
+              fecha,
+              tipo,
+              etiqueta,
+              totalExistente: totalFilas(existente.filas || []),
+              totalNuevo: totalFilas(filas),
+              filasCount: filas.length,
+            },
+          };
+        }
 
+        if (existente && forzarReemplazo) {
           await sbFetch(
             cfg,
             `turnos?fecha=eq.${fecha}&tipo=eq.${tipo}`,
             { method: 'PATCH', json: { filas, turno, updated_at: ahora }, prefer: 'return=minimal' },
             session
           );
+
+          const copiaLocal: HistorialTurnoLocal = {
+            id: Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+            fecha: ahora,
+            fechaTurno: metaTurno.fecha,
+            tipoTurno: metaTurno.tipo,
+            resumen: generarReporteProduccion(maquinas, turno, catalogo),
+            filas,
+          };
+          setHistorial((prev) => [copiaLocal, ...prev].slice(0, 30));
+
           showToast('ok', `Turno actualizado en BD: ${etiqueta} (${totalFilas(filas)} u)`);
           return;
         }
 
-        const adv = advertenciaTurnoDescuadrado(fecha, tipo);
-        if (
-          !window.confirm(
-            adv
-              ? adv
-              : `Guardar en historial:\n\n${etiqueta} (${filas.length} filas, ${totalFilas(filas)} u)\n\n¿Confirmas fecha y turno?`
-          )
-        ) {
-          return;
-        }
+        // New record insert
         await sbFetch(
           cfg,
           'turnos',
@@ -518,13 +492,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         showToast('ok', `Guardado en base de datos: ${etiqueta} (${totalFilas(filas)} u)`);
       } catch (err: any) {
+        console.error('Error al guardar en Supabase:', err);
+        if (err.message && (err.message.includes('401') || err.message.includes('Sesión vencida') || err.message.includes('JWT') || err.message.includes('row-level security'))) {
+          setSession(null);
+          showToast('error', 'Sesión vencida o no autorizada. Por favor inicia sesión nuevamente.');
+          return;
+        }
         const msg = /HTTP 409|duplicate|23505/.test(err.message)
           ? 'Ese turno ya existe; no se sobrescribió'
           : 'No se pudo guardar: ' + (err.message || '').slice(0, 80);
         showToast('error', msg);
       }
     },
-    [session, metaTurno, maquinas, turno, catalogo, setHistorial, showToast]
+    [session, metaTurno, maquinas, turno, catalogo, setHistorial, showToast, setSession]
   );
 
   return (

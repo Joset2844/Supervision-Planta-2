@@ -18,10 +18,12 @@ import {
   LogOut,
   ChevronDown,
   ChevronUp,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   getSupabaseConfig,
   sbLogin,
+  sbSignUp,
   sbFetch,
 } from '../../services/supabase';
 import {
@@ -40,6 +42,7 @@ export const HistorialDBView: React.FC = () => {
   const [hdbUser, setHdbUser] = useState('');
   const [hdbPass, setHdbPass] = useState('');
   const [hdbLoginError, setHdbLoginError] = useState('');
+  const [modoAuthHdb, setModoAuthHdb] = useState<'login' | 'signup'>('login');
 
   // Filters
   const [desde, setDesde] = useState('');
@@ -57,6 +60,7 @@ export const HistorialDBView: React.FC = () => {
     filas: FilaTurnoExcel[];
     editable: boolean;
     creador: string;
+    updated_at?: string;
   } | null>(null);
   const [filasEditadas, setFilasEditadas] = useState<FilaTurnoExcel[]>([]);
   const [editorExpandidos, setEditorExpandidos] = useState<Record<string, boolean>>({});
@@ -76,7 +80,53 @@ export const HistorialDBView: React.FC = () => {
     grupos: any[];
   }>({ total: 0, turnosCount: 0, kbTotal: 0, grupos: [] });
 
-  const esAdmin = session?.usuario === 'admin';
+  // Modal states for safe deletions without window.confirm or prompt
+  const [turnoAEliminar, setTurnoAEliminar] = useState<TurnoDBRow | null>(null);
+  const [eliminandoTurno, setEliminandoTurno] = useState(false);
+  const [confirmVersionModal, setConfirmVersionModal] = useState<{
+    titulo: string;
+    mensaje: string;
+    detalle?: string;
+    onConfirm: () => Promise<void>;
+  } | null>(null);
+  const [procesandoConfirmModal, setProcesandoConfirmModal] = useState(false);
+  const [modalLimpiarDias, setModalLimpiarDias] = useState(false);
+  const [diasLimpiezaSeleccionados, setDiasLimpiezaSeleccionados] = useState<number>(30);
+  const [modalCopiar, setModalCopiar] = useState<{
+    filas: FilaTurnoExcel[];
+    turnoData: any;
+    fechaDestino: string;
+    tipoDestino: string;
+    autorEmail: string;
+  } | null>(null);
+
+  // Admin status: strictly the designated administrator (josetejera44@gmail.com or user/email 'admin')
+  const esAdmin = Boolean(
+    session && (
+      session.email?.toLowerCase() === 'josetejera44@gmail.com' ||
+      session.usuario?.toLowerCase() === 'admin' ||
+      session.email?.toLowerCase() === 'admin@planta.local' ||
+      session.email?.toLowerCase().startsWith('admin@')
+    )
+  );
+
+  // Helper to verify if a shift is within the 24-hour editing window
+  const esMenorDe24Horas = (fechaStr: string, updatedAtStr?: string): boolean => {
+    try {
+      if (updatedAtStr) {
+        const time = new Date(updatedAtStr).getTime();
+        if (!isNaN(time)) {
+          const diffHoras = (Date.now() - time) / (1000 * 60 * 60);
+          return diffHoras <= 24;
+        }
+      }
+      const endOfDay = new Date(`${fechaStr}T23:59:59`).getTime();
+      const diffHoras = (Date.now() - endOfDay) / (1000 * 60 * 60);
+      return diffHoras <= 24;
+    } catch {
+      return false;
+    }
+  };
 
   const fechaCorta = (f: string) => {
     const p = String(f).split('-');
@@ -109,16 +159,22 @@ export const HistorialDBView: React.FC = () => {
     if (!cfg) return;
     setHdbLoginError('');
     if (!hdbUser || !hdbPass) {
-      setHdbLoginError('Ingresa usuario y contraseña');
+      setHdbLoginError('Ingresa usuario o correo y contraseña');
       return;
     }
     try {
-      const s = await sbLogin(cfg, hdbUser, hdbPass);
+      let s;
+      if (modoAuthHdb === 'signup') {
+        s = await sbSignUp(cfg, hdbUser, hdbPass);
+        showToast('ok', 'Cuenta creada e inicio de sesión exitoso');
+      } else {
+        s = await sbLogin(cfg, hdbUser, hdbPass);
+        showToast('ok', 'Sesión iniciada');
+      }
       setSession(s);
       setHdbPass('');
-      showToast('ok', 'Sesión iniciada');
     } catch (err: any) {
-      setHdbLoginError(err.message || 'Error al iniciar sesión');
+      setHdbLoginError(err.message || 'Error de autenticación');
     }
   };
 
@@ -155,6 +211,7 @@ export const HistorialDBView: React.FC = () => {
       filas: rec.filas || [],
       editable,
       creador: rec.created_by_email || '',
+      updated_at: rec.updated_at,
     });
     setFilasEditadas(JSON.parse(JSON.stringify(rec.filas || [])));
     setEditorExpandidos({});
@@ -172,9 +229,15 @@ export const HistorialDBView: React.FC = () => {
       showToast('error', 'Inicia sesión primero');
       return;
     }
-    if (!esAdmin && turnoEditando.creador !== session.email) {
-      showToast('error', 'Solo el autor o el admin pueden modificar este turno');
-      return;
+    if (!esAdmin) {
+      if (turnoEditando.creador && turnoEditando.creador.toLowerCase() !== session.email?.toLowerCase()) {
+        showToast('error', 'Solo el autor o el administrador pueden modificar este turno');
+        return;
+      }
+      if (!esMenorDe24Horas(turnoEditando.fecha, turnoEditando.updated_at)) {
+        showToast('error', 'Han pasado más de 24 horas. Solo el administrador puede modificar este turno.');
+        return;
+      }
     }
     const cfg = getSupabaseConfig(false);
     if (!cfg) return;
@@ -202,24 +265,38 @@ export const HistorialDBView: React.FC = () => {
     }
   };
 
-  const handleEliminarTurno = async (rec: TurnoDBRow) => {
-    if (!esAdmin) return;
-    if (!window.confirm(`¿Borrar ${fechaCorta(rec.fecha)} - ${rec.tipo === 'noche' ? 'Noche' : 'Día'} del historial?`))
+  const handleEliminarTurno = (rec: TurnoDBRow) => {
+    if (!esAdmin) {
+      showToast('error', 'Solo el administrador tiene permisos para eliminar turnos');
       return;
-    const cfg = getSupabaseConfig(false);
-    if (!cfg) return;
+    }
+    setTurnoAEliminar(rec);
+  };
 
+  const ejecutarEliminarTurno = async () => {
+    if (!turnoAEliminar) return;
+    const rec = turnoAEliminar;
+    const cfg = getSupabaseConfig(false);
+    if (!cfg) {
+      showToast('error', 'Falta configuración de Supabase');
+      return;
+    }
+
+    setEliminandoTurno(true);
     try {
       await sbFetch(
         cfg,
-        `turnos?fecha=eq.${rec.fecha}&tipo=eq.${rec.tipo}`,
+        `turnos?fecha=eq.${encodeURIComponent(rec.fecha)}&tipo=eq.${encodeURIComponent(rec.tipo)}`,
         { method: 'DELETE', prefer: 'return=representation' },
         session
       );
-      showToast('ok', 'Turno eliminado');
-      buscarHistorial();
+      showToast('ok', `Turno ${fechaCorta(rec.fecha)} (${rec.tipo === 'noche' ? 'Noche' : 'Día'}) eliminado`);
+      setTurnoAEliminar(null);
+      await buscarHistorial();
     } catch (err: any) {
       showToast('error', 'No se pudo borrar: ' + (err.message || ''));
+    } finally {
+      setEliminandoTurno(false);
     }
   };
 
@@ -373,20 +450,24 @@ export const HistorialDBView: React.FC = () => {
   };
 
   // Copiar turno version to another date/shift
-  const copiarTurnoA = async (filas: FilaTurnoExcel[], turnoData: any, fechaSug: string, tipoSug: string, autorEmail: string) => {
+  const iniciarCopiarTurno = (filas: FilaTurnoExcel[], turnoData: any, fechaSug: string, tipoSug: string, autorEmail: string) => {
     if (!esAdmin) return;
-    const f = prompt('Fecha destino (AAAA-MM-DD):', fechaSug);
-    if (!f) return;
-    const fTrim = f.trim();
+    setModalCopiar({
+      filas,
+      turnoData,
+      fechaDestino: fechaSug || new Date().toISOString().split('T')[0],
+      tipoDestino: tipoSug || 'dia',
+      autorEmail: autorEmail || session?.email || '',
+    });
+  };
+
+  const ejecutarCopiaConfirmada = async () => {
+    if (!modalCopiar || !esAdmin) return;
+    const { filas, turnoData, fechaDestino, tipoDestino, autorEmail } = modalCopiar;
+    const fTrim = fechaDestino.trim();
+    const tTrim = tipoDestino.trim().toLowerCase();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fTrim)) {
-      showToast('error', 'Fecha inválida');
-      return;
-    }
-    const t = prompt('Turno destino (dia / noche):', tipoSug);
-    if (!t) return;
-    const tTrim = t.trim().toLowerCase();
-    if (tTrim !== 'dia' && tTrim !== 'noche') {
-      showToast('error', 'Turno inválido');
+      showToast('error', 'Fecha inválida. Debe ser AAAA-MM-DD');
       return;
     }
     const cfg = getSupabaseConfig(false);
@@ -396,111 +477,128 @@ export const HistorialDBView: React.FC = () => {
       const ex: any[] = await sbFetch(cfg, `turnos?select=filas&fecha=eq.${fTrim}&tipo=eq.${tTrim}`, undefined, session);
       const e = ex && ex[0];
       const msg = e
-        ? `⚠ ${fechaCorta(fTrim)} ${tTrim} ya tiene ${totalFilas(e.filas)} u y se reemplazará por ${totalFilas(
+        ? `El turno ${fechaCorta(fTrim)} (${tTrim === 'noche' ? 'Noche' : 'Día'}) ya existe con ${totalFilas(e.filas).toLocaleString('es-PE')} u. ¿Deseas reemplazarlo con ${totalFilas(
             filas
-          )} u (lo anterior queda archivado).\n\n¿Confirmas?`
-        : `Crear ${fechaCorta(fTrim)} ${tTrim} con ${totalFilas(filas)} u.\n\n¿Confirmas?`;
-      if (!window.confirm(msg)) return;
+          ).toLocaleString('es-PE')} u?`
+        : `¿Crear ${fechaCorta(fTrim)} (${tTrim === 'noche' ? 'Noche' : 'Día'}) con ${totalFilas(filas).toLocaleString('es-PE')} u?`;
 
-      const ahora = new Date().toISOString();
-      if (e) {
-        await sbFetch(
-          cfg,
-          `turnos?fecha=eq.${fTrim}&tipo=eq.${tTrim}`,
-          { method: 'PATCH', json: { filas, turno: turnoData || null, updated_at: ahora }, prefer: 'return=minimal' },
-          session
-        );
-      } else {
-        await sbFetch(
-          cfg,
-          'turnos',
-          {
-            method: 'POST',
-            json: [
+      setModalCopiar(null);
+      setConfirmVersionModal({
+        titulo: 'Confirmar Copia de Turno',
+        mensaje: msg,
+        detalle: e ? 'El contenido anterior quedará respaldado en el historial de versiones.' : undefined,
+        onConfirm: async () => {
+          const ahora = new Date().toISOString();
+          if (e) {
+            await sbFetch(
+              cfg,
+              `turnos?fecha=eq.${fTrim}&tipo=eq.${tTrim}`,
+              { method: 'PATCH', json: { filas, turno: turnoData || null, updated_at: ahora }, prefer: 'return=minimal' },
+              session
+            );
+          } else {
+            await sbFetch(
+              cfg,
+              'turnos',
               {
-                fecha: fTrim,
-                tipo: tTrim,
-                filas,
-                turno: turnoData || null,
-                created_by: session!.user_id,
-                created_by_email: autorEmail || session!.email,
-                updated_at: ahora,
+                method: 'POST',
+                json: [
+                  {
+                    fecha: fTrim,
+                    tipo: tTrim,
+                    filas,
+                    turno: turnoData || null,
+                    created_by: session!.user_id,
+                    created_by_email: autorEmail || session!.email,
+                    updated_at: ahora,
+                  },
+                ],
+                prefer: 'return=minimal',
               },
-            ],
-            prefer: 'return=minimal',
-          },
-          session
-        );
-      }
-      showToast('ok', `Guardado en ${fechaCorta(fTrim)} ${tTrim}`);
+              session
+            );
+          }
+          showToast('ok', `Guardado en ${fechaCorta(fTrim)} ${tTrim}`);
+          buscarHistorial();
+        },
+      });
     } catch (err: any) {
       showToast('error', 'No se pudo guardar: ' + (err.message || ''));
     }
   };
 
   // Delete single version
-  const handleEliminarVersion = async (id: string, totalU: number) => {
+  const handleEliminarVersion = (id: string, totalU: number) => {
     if (!esAdmin) return;
-    if (!window.confirm(`¿Eliminar esta versión (${totalU} u)? No se puede deshacer.`)) return;
-    const cfg = getSupabaseConfig(false);
-    if (!cfg) return;
-
-    try {
-      await sbFetch(cfg, 'rpc/borrar_versiones', { method: 'POST', json: { p_id: id }, prefer: 'return=representation' }, session);
-      showToast('ok', 'Versión eliminada');
-      if (versionesTurnoActual) abrirVersionesTurno(versionesTurnoActual, subModoVersiones);
-    } catch (err: any) {
-      showToast('error', 'No se pudo borrar: ' + (err.message || ''));
-    }
+    setConfirmVersionModal({
+      titulo: 'Eliminar Versión Archivada',
+      mensaje: `¿Deseas eliminar permanentemente esta versión de archivo (${totalU.toLocaleString('es-PE')} u)?`,
+      detalle: 'Esta acción no se puede deshacer.',
+      onConfirm: async () => {
+        const cfg = getSupabaseConfig(false);
+        if (!cfg) return;
+        await sbFetch(cfg, 'rpc/borrar_versiones', { method: 'POST', json: { p_id: id }, prefer: 'return=representation' }, session);
+        showToast('ok', 'Versión eliminada');
+        if (versionesTurnoActual) abrirVersionesTurno(versionesTurnoActual, subModoVersiones);
+      },
+    });
   };
 
   // Bulk delete versions of a shift
-  const handleEliminarTodasVersionesDeTurno = async (fecha: string, tipo: string) => {
+  const handleEliminarTodasVersionesDeTurno = (fecha: string, tipo: string) => {
     if (!esAdmin) return;
-    if (!window.confirm(`¿Borrar todas las versiones archivadas de ${fechaCorta(fecha)} ${tipo}?\nEl turno actual NO se toca.`))
-      return;
-    const cfg = getSupabaseConfig(false);
-    if (!cfg) return;
-
-    try {
-      const rows: any[] = await sbFetch(cfg, `turnos_versiones?select=id&fecha=eq.${fecha}&tipo=eq.${tipo}&limit=1000`, undefined, session);
-      const ids = (rows || []).map((r) => r.id);
-      if (!ids.length) {
-        showToast('error', 'No hay versiones que borrar');
-        return;
-      }
-      for (const id of ids) {
-        await sbFetch(cfg, 'rpc/borrar_versiones', { method: 'POST', json: { p_id: id }, prefer: 'return=representation' }, session).catch(() => {});
-      }
-      showToast('ok', `${ids.length} versión(es) eliminada(s)`);
-      if (subModoVersiones === 'resumen') abrirResumenVersiones();
-      else if (versionesTurnoActual) abrirVersionesTurno(versionesTurnoActual, 'detalle');
-    } catch (err: any) {
-      showToast('error', 'No se pudo borrar: ' + (err.message || ''));
-    }
+    setConfirmVersionModal({
+      titulo: 'Eliminar Versiones Archivadas',
+      mensaje: `¿Borrar todas las versiones archivadas de ${fechaCorta(fecha)} ${tipo === 'noche' ? 'Noche' : 'Día'}?`,
+      detalle: 'El turno activo en producción NO será modificado. Solo se eliminarán las copias históricas de respaldo.',
+      onConfirm: async () => {
+        const cfg = getSupabaseConfig(false);
+        if (!cfg) return;
+        const rows: any[] = await sbFetch(
+          cfg,
+          `turnos_versiones?select=id&fecha=eq.${encodeURIComponent(fecha)}&tipo=eq.${encodeURIComponent(tipo)}&limit=1000`,
+          undefined,
+          session
+        );
+        const ids = (rows || []).map((r) => r.id);
+        if (!ids.length) {
+          showToast('error', 'No hay versiones que borrar');
+          return;
+        }
+        for (const id of ids) {
+          await sbFetch(cfg, 'rpc/borrar_versiones', { method: 'POST', json: { p_id: id }, prefer: 'return=representation' }, session).catch(() => {});
+        }
+        showToast('ok', `${ids.length} versión(es) eliminada(s)`);
+        if (subModoVersiones === 'resumen') abrirResumenVersiones();
+        else if (versionesTurnoActual) abrirVersionesTurno(versionesTurnoActual, 'detalle');
+      },
+    });
   };
 
   // Bulk delete by N days
-  const handleBorrarVersionesAntiguas = async () => {
+  const handleBorrarVersionesAntiguas = () => {
     if (!esAdmin) return;
-    const dStr = prompt('Borrar versiones archivadas hace más de cuántos días?', '30');
-    if (!dStr) return;
-    const d = parseInt(dStr, 10);
-    if (isNaN(d) || d < 1) {
-      showToast('error', 'Número de días inválido');
-      return;
-    }
-    const corte = new Date(Date.now() - d * 86400000).toISOString();
-    if (!window.confirm(`Se borrarán TODAS las versiones archivadas antes de ${fechaHoraCorta(corte)}.\nNo se puede deshacer.\n\n¿Confirmas?`))
-      return;
+    setModalLimpiarDias(true);
+  };
+
+  const ejecutarBorrarVersionesAntiguas = async (dias: number) => {
+    if (!esAdmin) return;
+    const corte = new Date(Date.now() - dias * 86400000).toISOString();
     const cfg = getSupabaseConfig(false);
     if (!cfg) return;
 
+    setProcesandoConfirmModal(true);
     try {
-      const rows: any[] = await sbFetch(cfg, `turnos_versiones?select=id&archivado_en=lt.${encodeURIComponent(corte)}&limit=1000`, undefined, session);
+      const rows: any[] = await sbFetch(
+        cfg,
+        `turnos_versiones?select=id&archivado_en=lt.${encodeURIComponent(corte)}&limit=1000`,
+        undefined,
+        session
+      );
       const ids = (rows || []).map((r) => r.id);
       if (!ids.length) {
         showToast('ok', 'No hay versiones archivadas antes de esa fecha');
+        setModalLimpiarDias(false);
         return;
       }
       let borrados = 0;
@@ -509,9 +607,12 @@ export const HistorialDBView: React.FC = () => {
         borrados++;
       }
       showToast('ok', `${borrados} versión(es) antigua(s) eliminada(s)`);
+      setModalLimpiarDias(false);
       abrirResumenVersiones();
     } catch (err: any) {
       showToast('error', 'No se pudo borrar: ' + (err.message || ''));
+    } finally {
+      setProcesandoConfirmModal(false);
     }
   };
 
@@ -524,20 +625,48 @@ export const HistorialDBView: React.FC = () => {
             <History size={18} />
           </div>
           <h2 className="text-white text-base sm:text-lg font-bold font-['Oswald',sans-serif] tracking-wide uppercase m-0">
-            Acceso a Historial en la Nube
+            {modoAuthHdb === 'login' ? 'Acceso a Historial en la Nube' : 'Crear Cuenta en Supabase'}
           </h2>
+        </div>
+
+        {/* Toggle Login vs Register */}
+        <div className="flex p-1 bg-[#12161F] rounded-xl border border-[#2D3748] mb-4">
+          <button
+            type="button"
+            onClick={() => {
+              setModoAuthHdb('login');
+              setHdbLoginError('');
+            }}
+            className={`flex-1 py-1.5 text-xs font-bold font-['Oswald',sans-serif] tracking-wider uppercase rounded-lg transition-colors cursor-pointer ${
+              modoAuthHdb === 'login' ? 'bg-[#F2A93B] text-[#12161F]' : 'text-[#A0AEC0] hover:text-white'
+            }`}
+          >
+            Iniciar Sesión
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setModoAuthHdb('signup');
+              setHdbLoginError('');
+            }}
+            className={`flex-1 py-1.5 text-xs font-bold font-['Oswald',sans-serif] tracking-wider uppercase rounded-lg transition-colors cursor-pointer ${
+              modoAuthHdb === 'signup' ? 'bg-[#F2A93B] text-[#12161F]' : 'text-[#A0AEC0] hover:text-white'
+            }`}
+          >
+            Crear Cuenta
+          </button>
         </div>
 
         <div className="space-y-3.5 mb-5">
           <div>
             <label className="block text-xs font-semibold text-[#CBD5E0] mb-1.5 uppercase tracking-wide">
-              Usuario de Planta
+              Usuario o Correo
             </label>
             <input
               type="text"
               value={hdbUser}
               onChange={(e) => setHdbUser(e.target.value)}
-              placeholder="Ej. usuario (sin @)"
+              placeholder="Ej. supervisor1 o usuario@correo.com"
               className="w-full py-3 px-3.5 rounded-xl border border-[#4A5568] text-base sm:text-sm bg-[#232A38] text-white outline-none focus:border-[#F2A93B] min-h-[46px]"
             />
           </div>
@@ -549,13 +678,14 @@ export const HistorialDBView: React.FC = () => {
               type="password"
               value={hdbPass}
               onChange={(e) => setHdbPass(e.target.value)}
+              placeholder="Tu contraseña"
               className="w-full py-3 px-3.5 rounded-xl border border-[#4A5568] text-base sm:text-sm bg-[#232A38] text-white outline-none focus:border-[#F2A93B] min-h-[46px]"
             />
           </div>
         </div>
 
         {hdbLoginError && (
-          <p className="text-[#E53E3E] text-xs mb-4 bg-[#E53E3E]/10 p-2.5 rounded-lg border border-[#E53E3E]/30">
+          <p className="text-[#E53E3E] text-xs mb-4 bg-[#E53E3E]/10 p-2.5 rounded-lg border border-[#E53E3E]/30 leading-snug">
             {hdbLoginError}
           </p>
         )}
@@ -565,11 +695,11 @@ export const HistorialDBView: React.FC = () => {
           onClick={handleLogin}
           className="w-full bg-[#F2A93B] text-[#12161F] py-3.5 px-4 rounded-xl font-bold uppercase font-['Oswald',sans-serif] tracking-wider text-sm cursor-pointer hover:brightness-105 active:scale-95 transition-all shadow-md min-h-[48px]"
         >
-          Iniciar Sesión
+          {modoAuthHdb === 'login' ? 'Iniciar Sesión' : 'Registrar Cuenta'}
         </button>
 
         <p className="text-[11px] text-[#A0AEC0] mt-4 mb-0 text-center">
-          Ingresa tu usuario (ej. supervisor1). El sistema lo asocia a su cuenta de planta.
+          Ingresa tu usuario (ej. supervisor1) o correo completo.
         </p>
       </div>
     );
@@ -734,7 +864,7 @@ export const HistorialDBView: React.FC = () => {
                     <button
                       type="button"
                       onClick={() =>
-                        copiarTurnoA(it.filas, it.turno, versionesTurnoActual.fecha, versionesTurnoActual.tipo, it.autor)
+                        iniciarCopiarTurno(it.filas, it.turno, versionesTurnoActual.fecha, versionesTurnoActual.tipo, it.autor)
                       }
                       className="bg-[#F2A93B] text-[#12161F] py-2 px-3 rounded-xl text-xs font-bold cursor-pointer min-h-[38px]"
                     >
@@ -783,9 +913,7 @@ export const HistorialDBView: React.FC = () => {
     };
 
     const handleEliminarFila = (index: number) => {
-      if (window.confirm('¿Eliminar esta fila?')) {
-        setFilasEditadas((prev) => prev.filter((_, i) => i !== index));
-      }
+      setFilasEditadas((prev) => prev.filter((_, i) => i !== index));
     };
 
     const handleAgregarOpAMaquina = (nombreMaquina: string, codigo: string) => {
@@ -820,10 +948,8 @@ export const HistorialDBView: React.FC = () => {
             <button
               type="button"
               onClick={() => {
-                if (window.confirm('¿Salir sin guardar cambios?')) {
-                  setEditorActivo(false);
-                  setTurnoEditando(null);
-                }
+                setEditorActivo(false);
+                setTurnoEditando(null);
               }}
               className="flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-[#CBD5E0] hover:text-white bg-[#232A38] border border-[#4A5568] py-2 px-3.5 rounded-xl cursor-pointer min-h-[40px]"
             >
@@ -834,8 +960,8 @@ export const HistorialDBView: React.FC = () => {
                 {fechaCorta(turnoEditando.fecha)} · {turnoEditando.tipo === 'noche' ? 'Noche' : 'Día'}
               </span>
               {!turnoEditando.editable && (
-                <span className="text-xs text-[#A0AEC0] ml-2 block sm:inline">
-                  (Modo solo lectura)
+                <span className="text-xs text-[#F6AD55] bg-[#3A2E1B] border border-[#F2A93B]/30 px-2 py-0.5 rounded-md ml-2 inline-block">
+                  Solo lectura{turnoEditando.creador && !esAdmin ? ' (Bloqueado tras 24h · solo Admin)' : ''}
                 </span>
               )}
             </div>
@@ -1078,21 +1204,28 @@ export const HistorialDBView: React.FC = () => {
     <div className="space-y-4 sm:space-y-6">
       {/* Filter panel */}
       <div className="bg-[#1A202C] border border-[#2D3748] rounded-2xl p-4 sm:p-5 shadow-sm space-y-3.5">
-        <div className="flex items-center justify-between pb-2 border-b border-[#2D3748]">
+        <div className="flex items-center justify-between pb-2 border-b border-[#2D3748] flex-wrap gap-2">
           <div className="flex items-center gap-2">
             <History size={18} className="text-[#F2A93B]" />
             <h2 className="m-0 text-sm sm:text-base font-bold text-white font-['Oswald',sans-serif] tracking-wide uppercase">
               Historial de Turnos (Nube)
             </h2>
+            {esAdmin && (
+              <span className="text-[10px] font-bold bg-[#F2A93B]/20 text-[#F6AD55] border border-[#F2A93B]/40 px-2 py-0.5 rounded-md font-['IBM_Plex_Mono',monospace] flex items-center gap-1">
+                <ShieldCheck size={12} /> ADMIN
+              </span>
+            )}
           </div>
-          <button
-            type="button"
-            onClick={() => setSession(null)}
-            className="flex items-center gap-1 text-xs text-[#CBD5E0] hover:text-[#E53E3E] cursor-pointer bg-transparent border-none p-1"
-          >
-            <LogOut size={14} />
-            <span>Salir ({session.usuario})</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSession(null)}
+              className="flex items-center gap-1 text-xs text-[#CBD5E0] hover:text-[#E53E3E] cursor-pointer bg-transparent border-none p-1"
+            >
+              <LogOut size={14} />
+              <span>Salir ({session.usuario})</span>
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -1184,8 +1317,16 @@ export const HistorialDBView: React.FC = () => {
           turnos.map((rec) => {
             const filas = rec.filas || [];
             const tot = filas.reduce((a, f) => a + (f.total || 0), 0);
-            const duenio = !!(rec.created_by_email && rec.created_by_email === session.email);
-            const esMio = esAdmin || duenio;
+            const duenio = Boolean(
+              rec.created_by_email &&
+              session?.email &&
+              rec.created_by_email.toLowerCase() === session.email.toLowerCase()
+            );
+            const dentroDe24h = esMenorDe24Horas(rec.fecha, rec.updated_at);
+            // Admin can always edit. Creators can only edit within the first 24 hours.
+            const puedeEditar = esAdmin || (duenio && dentroDe24h);
+            // ONLY Admin can delete shifts.
+            const puedeBorrar = esAdmin;
             const autor = rec.created_by_email ? rec.created_by_email.split('@')[0] : 'desconocido';
             const itemKey = `${rec.fecha}-${rec.tipo}`;
             const estaExpandido = turnoExpandidoKey === itemKey;
@@ -1221,12 +1362,33 @@ export const HistorialDBView: React.FC = () => {
                     <span className="text-[11px] text-[#A0AEC0] truncate">
                       {filas.length} filas · {duenio ? <strong className="text-[#38A169]">por ti</strong> : `por ${autor}`}
                     </span>
+                    {duenio && !dentroDe24h && !esAdmin && (
+                      <span
+                        className="text-[10px] text-[#CBD5E0] bg-[#232A38] border border-[#4A5568] px-1.5 py-0.5 rounded font-['IBM_Plex_Mono',monospace]"
+                        title="Edición bloqueada tras 24 horas (solo Admin)"
+                      >
+                        Bloqueado (&gt;24h)
+                      </span>
+                    )}
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                     <span className="font-['IBM_Plex_Mono',monospace] font-bold text-xs sm:text-sm text-[#F2A93B] tabular-nums">
                       {tot.toLocaleString('es-PE')} u
                     </span>
+                    {puedeBorrar && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEliminarTurno(rec);
+                        }}
+                        className="p-1.5 text-[#E53E3E]/75 hover:text-[#E53E3E] hover:bg-[#E53E3E]/15 rounded-lg transition-colors cursor-pointer"
+                        title="Eliminar del historial (Solo Admin)"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    )}
                     <div className={`p-1 rounded text-[#A0AEC0] transition-colors ${estaExpandido ? 'text-[#F2A93B]' : ''}`}>
                       {estaExpandido ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
                     </div>
@@ -1238,10 +1400,10 @@ export const HistorialDBView: React.FC = () => {
                   <div className="px-2.5 sm:px-3 pb-2.5 pt-1.5 border-t border-[#2D3748] bg-[#141B26] flex items-center gap-2 flex-wrap">
                     <button
                       type="button"
-                      onClick={() => abrirEditor(rec, esMio)}
+                      onClick={() => abrirEditor(rec, puedeEditar)}
                       className="flex-1 sm:flex-initial bg-[#F2A93B] text-[#12161F] py-1.5 px-3 rounded-lg text-xs font-bold uppercase font-['Oswald',sans-serif] tracking-wider cursor-pointer hover:brightness-105 active:scale-95"
                     >
-                      {esMio ? 'Ver / Editar' : 'Ver Turno'}
+                      {puedeEditar ? 'Ver / Editar' : 'Ver Turno'}
                     </button>
                     <button
                       type="button"
@@ -1286,14 +1448,15 @@ export const HistorialDBView: React.FC = () => {
                         Versiones
                       </button>
                     )}
-                    {esAdmin && (
+                    {puedeBorrar && (
                       <button
                         type="button"
                         onClick={() => handleEliminarTurno(rec)}
-                        className="p-1.5 text-[#E53E3E] hover:bg-[#E53E3E]/20 rounded-lg cursor-pointer ml-auto"
-                        title="Eliminar del historial"
+                        className="bg-[#232A38] text-[#E53E3E] border border-[#E53E3E]/40 hover:bg-[#E53E3E]/20 py-1.5 px-2.5 rounded-lg text-xs font-semibold cursor-pointer active:scale-95 flex items-center gap-1.5 ml-auto"
+                        title="Eliminar del historial (Solo Admin)"
                       >
-                        <Trash2 size={15} />
+                        <Trash2 size={14} />
+                        <span>Eliminar</span>
                       </button>
                     )}
                   </div>
@@ -1303,6 +1466,253 @@ export const HistorialDBView: React.FC = () => {
           })
         )}
       </div>
+
+      {/* Modal Confirmar Eliminación de Turno */}
+      {turnoAEliminar && (
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-3 sm:p-4 backdrop-blur-xs">
+          <div className="bg-[#1A202C] border border-[#E53E3E]/50 rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-2xl">
+            <div className="flex items-center gap-3 text-[#E53E3E] mb-3">
+              <div className="w-10 h-10 rounded-xl bg-[#E53E3E]/20 flex items-center justify-center shrink-0 border border-[#E53E3E]/30">
+                <Trash2 size={20} />
+              </div>
+              <div>
+                <h3 className="text-white font-['Oswald',sans-serif] text-base sm:text-lg font-bold tracking-wide uppercase m-0">
+                  ¿Eliminar turno del historial?
+                </h3>
+                <p className="text-xs text-[#CBD5E0] m-0">
+                  Esta acción eliminará el registro de Supabase permanentemente.
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-[#12161F] border border-[#2D3748] rounded-xl p-3.5 my-4 space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-[#A0AEC0]">Fecha:</span>
+                <span className="font-['IBM_Plex_Mono',monospace] font-bold text-white">
+                  {fechaCorta(turnoAEliminar.fecha)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[#A0AEC0]">Turno:</span>
+                <span className="font-bold text-[#F6AD55]">
+                  {turnoAEliminar.tipo === 'noche' ? 'Noche' : 'Día'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[#A0AEC0]">Total piezas:</span>
+                <span className="font-['IBM_Plex_Mono',monospace] font-bold text-[#F2A93B]">
+                  {totalFilas(turnoAEliminar.filas).toLocaleString('es-PE')} u
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[#A0AEC0]">Máquinas / filas:</span>
+                <span className="text-white">
+                  {turnoAEliminar.filas?.length || 0} filas
+                </span>
+              </div>
+              {turnoAEliminar.created_by_email && (
+                <div className="flex justify-between">
+                  <span className="text-[#A0AEC0]">Creado por:</span>
+                  <span className="text-white truncate max-w-[200px]">
+                    {turnoAEliminar.created_by_email}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                type="button"
+                disabled={eliminandoTurno}
+                onClick={() => setTurnoAEliminar(null)}
+                className="flex-1 bg-[#232A38] text-[#CBD5E0] hover:text-white py-2.5 px-4 rounded-xl text-xs sm:text-sm font-semibold border border-[#4A5568] cursor-pointer min-h-[42px]"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={eliminandoTurno}
+                onClick={ejecutarEliminarTurno}
+                className="flex-1 bg-[#E53E3E] hover:bg-[#c53030] text-white py-2.5 px-4 rounded-xl text-xs sm:text-sm font-bold uppercase font-['Oswald',sans-serif] tracking-wider cursor-pointer shadow-md min-h-[42px] flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {eliminandoTurno ? (
+                  <span>Eliminando...</span>
+                ) : (
+                  <>
+                    <Trash2 size={16} />
+                    <span>Sí, Eliminar</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Confirmar Eliminación de Versiones */}
+      {confirmVersionModal && (
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-3 sm:p-4 backdrop-blur-xs">
+          <div className="bg-[#1A202C] border border-[#E53E3E]/50 rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-2xl">
+            <div className="flex items-center gap-3 text-[#E53E3E] mb-3">
+              <div className="w-10 h-10 rounded-xl bg-[#E53E3E]/20 flex items-center justify-center shrink-0 border border-[#E53E3E]/30">
+                <Trash2 size={20} />
+              </div>
+              <div>
+                <h3 className="text-white font-['Oswald',sans-serif] text-base sm:text-lg font-bold tracking-wide uppercase m-0">
+                  {confirmVersionModal.titulo}
+                </h3>
+              </div>
+            </div>
+
+            <p className="text-xs sm:text-sm text-[#CBD5E0] leading-relaxed my-3">
+              {confirmVersionModal.mensaje}
+            </p>
+            {confirmVersionModal.detalle && (
+              <p className="text-xs text-[#A0AEC0] bg-[#12161F] p-2.5 rounded-lg border border-[#2D3748]">
+                {confirmVersionModal.detalle}
+              </p>
+            )}
+
+            <div className="flex items-center gap-3 pt-3">
+              <button
+                type="button"
+                disabled={procesandoConfirmModal}
+                onClick={() => setConfirmVersionModal(null)}
+                className="flex-1 bg-[#232A38] text-[#CBD5E0] hover:text-white py-2.5 px-4 rounded-xl text-xs sm:text-sm font-semibold border border-[#4A5568] cursor-pointer min-h-[42px]"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={procesandoConfirmModal}
+                onClick={async () => {
+                  setProcesandoConfirmModal(true);
+                  try {
+                    await confirmVersionModal.onConfirm();
+                    setConfirmVersionModal(null);
+                  } catch (err: any) {
+                    showToast('error', err.message || 'Error');
+                  } finally {
+                    setProcesandoConfirmModal(false);
+                  }
+                }}
+                className="flex-1 bg-[#E53E3E] hover:bg-[#c53030] text-white py-2.5 px-4 rounded-xl text-xs sm:text-sm font-bold uppercase font-['Oswald',sans-serif] tracking-wider cursor-pointer shadow-md min-h-[42px] flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {procesandoConfirmModal ? <span>Procesando...</span> : <span>Confirmar</span>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Limpiar Versiones Antiguas */}
+      {modalLimpiarDias && (
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-3 sm:p-4 backdrop-blur-xs">
+          <div className="bg-[#1A202C] border border-[#2D3748] rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-2xl">
+            <h3 className="text-white font-['Oswald',sans-serif] text-base sm:text-lg font-bold tracking-wide uppercase mb-2">
+              Limpiar Versiones Archivadas Antiguas
+            </h3>
+            <p className="text-xs text-[#CBD5E0] mb-4">
+              Selecciona el umbral para borrar versiones de respaldo anteriores a esa antigüedad:
+            </p>
+
+            <div className="grid grid-cols-4 gap-2 mb-4">
+              {[15, 30, 60, 90].map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => setDiasLimpiezaSeleccionados(d)}
+                  className={`py-2 px-2 rounded-xl text-xs font-bold font-['IBM_Plex_Mono',monospace] border cursor-pointer transition-colors ${
+                    diasLimpiezaSeleccionados === d
+                      ? 'bg-[#F2A93B] text-[#12161F] border-[#F2A93B]'
+                      : 'bg-[#232A38] text-[#CBD5E0] border-[#4A5568] hover:text-white'
+                  }`}
+                >
+                  &gt; {d} días
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                disabled={procesandoConfirmModal}
+                onClick={() => setModalLimpiarDias(false)}
+                className="flex-1 bg-[#232A38] text-[#CBD5E0] hover:text-white py-2.5 px-4 rounded-xl text-xs sm:text-sm font-semibold border border-[#4A5568] cursor-pointer min-h-[42px]"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={procesandoConfirmModal}
+                onClick={() => ejecutarBorrarVersionesAntiguas(diasLimpiezaSeleccionados)}
+                className="flex-1 bg-[#E53E3E] hover:bg-[#c53030] text-white py-2.5 px-4 rounded-xl text-xs sm:text-sm font-bold uppercase font-['Oswald',sans-serif] tracking-wider cursor-pointer shadow-md min-h-[42px] flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {procesandoConfirmModal ? <span>Limpiando...</span> : <span>Limpiar Antiguas</span>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Copiar Versión a Fecha/Turno */}
+      {modalCopiar && (
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-3 sm:p-4 backdrop-blur-xs">
+          <div className="bg-[#1A202C] border border-[#2D3748] rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-2xl space-y-4">
+            <h3 className="text-white font-['Oswald',sans-serif] text-base sm:text-lg font-bold tracking-wide uppercase m-0">
+              Copiar Versión a Turno
+            </h3>
+            <p className="text-xs text-[#CBD5E0] m-0">
+              Indica la fecha y el turno de destino donde deseas copiar estas {modalCopiar.filas.length} filas ({totalFilas(modalCopiar.filas).toLocaleString('es-PE')} u):
+            </p>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-[#CBD5E0] mb-1 uppercase tracking-wide">
+                  Fecha Destino
+                </label>
+                <input
+                  type="date"
+                  value={modalCopiar.fechaDestino}
+                  onChange={(e) => setModalCopiar({ ...modalCopiar, fechaDestino: e.target.value })}
+                  className="w-full py-2.5 px-3 rounded-xl border border-[#4A5568] text-sm font-['IBM_Plex_Mono',monospace] bg-[#232A38] text-white outline-none min-h-[44px]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[#CBD5E0] mb-1 uppercase tracking-wide">
+                  Turno Destino
+                </label>
+                <select
+                  value={modalCopiar.tipoDestino}
+                  onChange={(e) => setModalCopiar({ ...modalCopiar, tipoDestino: e.target.value })}
+                  className="w-full py-2.5 px-3 rounded-xl border border-[#4A5568] text-sm bg-[#232A38] text-white outline-none min-h-[44px]"
+                >
+                  <option value="dia">Turno Día</option>
+                  <option value="noche">Turno Noche</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setModalCopiar(null)}
+                className="flex-1 bg-[#232A38] text-[#CBD5E0] hover:text-white py-2.5 px-4 rounded-xl text-xs sm:text-sm font-semibold border border-[#4A5568] cursor-pointer min-h-[42px]"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={ejecutarCopiaConfirmada}
+                className="flex-1 bg-[#F2A93B] text-[#12161F] py-2.5 px-4 rounded-xl text-xs sm:text-sm font-bold uppercase font-['Oswald',sans-serif] tracking-wider cursor-pointer shadow-md min-h-[42px]"
+              >
+                Continuar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

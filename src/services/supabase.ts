@@ -59,7 +59,11 @@ export function saveSession(s: SupabaseSession | null) {
 }
 
 export function sbUsuarioAEmail(usuario: string): string {
-  return usuario.trim().toLowerCase().replace(/\s+/g, '') + '@' + SB_DOMINIO_USUARIO;
+  const u = usuario.trim().toLowerCase();
+  if (u.includes('@')) {
+    return u;
+  }
+  return u.replace(/\s+/g, '') + '@' + SB_DOMINIO_USUARIO;
 }
 
 export async function sbLogin(cfg: SupabaseConfig, usuario: string, pass: string): Promise<SupabaseSession> {
@@ -71,7 +75,7 @@ export async function sbLogin(cfg: SupabaseConfig, usuario: string, pass: string
   });
   const data = await resp.json();
   if (!resp.ok) {
-    throw new Error(data.error_description || data.msg || `HTTP ${resp.status}`);
+    throw new Error(data.error_description || data.msg || data.message || `HTTP ${resp.status}`);
   }
   const nombreUsuario = data.user.email.split('@')[0];
   const session: SupabaseSession = {
@@ -83,6 +87,37 @@ export async function sbLogin(cfg: SupabaseConfig, usuario: string, pass: string
   };
   saveSession(session);
   return session;
+}
+
+export async function sbSignUp(cfg: SupabaseConfig, usuario: string, pass: string): Promise<SupabaseSession> {
+  let email = sbUsuarioAEmail(usuario);
+  // If no domain was specified and default domain is .local, ensure signup uses .com to satisfy Supabase validation
+  if (!usuario.includes('@') && email.endsWith('.local')) {
+    email = usuario.trim().toLowerCase().replace(/\s+/g, '') + '@planta.com';
+  }
+  const resp = await fetch(cfg.url + '/auth/v1/signup', {
+    method: 'POST',
+    headers: { apikey: cfg.key, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password: pass }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) {
+    throw new Error(data.error_description || data.msg || data.message || `HTTP ${resp.status}`);
+  }
+  if (data.access_token) {
+    const nombreUsuario = data.user.email.split('@')[0];
+    const session: SupabaseSession = {
+      access_token: data.access_token,
+      refresh_token: data.refresh_token,
+      user_id: data.user.id,
+      email: data.user.email,
+      usuario: nombreUsuario,
+    };
+    saveSession(session);
+    return session;
+  }
+  // Try logging in with the credentials
+  return sbLogin(cfg, email, pass);
 }
 
 let sbRenovandoPromesa: Promise<SupabaseSession | null> | null = null;
@@ -161,11 +196,18 @@ export async function sbFetch<T = any>(
     throw new Error(`HTTP ${resp.status} ${text}`);
   }
 
-  if (options.prefer && options.prefer.indexOf('return=representation') !== -1) {
-    return resp.json();
-  }
-  if (resp.status === 204 || options.method === 'DELETE' || options.method === 'POST') {
+  if (resp.status === 204) {
     return null as any;
   }
-  return resp.json();
+
+  const responseText = await resp.text();
+  if (!responseText || !responseText.trim()) {
+    return null as any;
+  }
+
+  try {
+    return JSON.parse(responseText);
+  } catch {
+    return responseText as any;
+  }
 }

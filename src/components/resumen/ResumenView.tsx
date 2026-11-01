@@ -12,6 +12,7 @@ import {
   Gauge,
   Award,
   ChevronDown,
+  FileDown,
 } from 'lucide-react';
 import {
   AREAS_ORDEN,
@@ -23,6 +24,7 @@ import {
   imprimirActivacion,
 } from '../../services/excel';
 import { formatearFechaTurno, etiquetaTurno } from '../../services/reports';
+import { exportarPdfEficienciaVasos } from '../../services/pdfEficiencia';
 import { FilaTurnoExcel, Maquina } from '../../types';
 
 export const ResumenView: React.FC = () => {
@@ -62,9 +64,9 @@ export const ResumenView: React.FC = () => {
       const estado = !tieneMeta
         ? ('sin_meta' as const)
         : pct >= 100
-        ? ('eficiente' as const)
+        ? ('perfeccion' as const)
         : pct >= 80
-        ? ('progreso' as const)
+        ? ('eficiente' as const)
         : ('bajo' as const);
       const diferencia = tieneMeta ? totalProd - meta : 0;
       return {
@@ -92,7 +94,9 @@ export const ResumenView: React.FC = () => {
       const prodTotal = maqsArea.reduce((acc, mm) => acc + mm.totalProd, 0);
       const prodConMeta = conMeta.reduce((acc, mm) => acc + mm.totalProd, 0);
       const pct = metaTotal > 0 ? (prodConMeta / metaTotal) * 100 : 0;
-      const eficientes = conMeta.filter((mm) => mm.estado === 'eficiente').length;
+      const eficientes = conMeta.filter(
+        (mm) => mm.estado === 'perfeccion' || mm.estado === 'eficiente'
+      ).length;
       return {
         ...area,
         totalMaquinas: maqsArea.length,
@@ -107,8 +111,8 @@ export const ResumenView: React.FC = () => {
 
   const resumenEficiencia = useMemo(() => {
     const conMeta = metricasMaquinas.filter((mm) => mm.tieneMeta);
+    const perfeccionCount = conMeta.filter((mm) => mm.estado === 'perfeccion').length;
     const eficientesCount = conMeta.filter((mm) => mm.estado === 'eficiente').length;
-    const enProgresoCount = conMeta.filter((mm) => mm.estado === 'progreso').length;
     const bajoCount = conMeta.filter((mm) => mm.estado === 'bajo').length;
     const maquinasSinMeta = metricasMaquinas.length - conMeta.length;
     const metaAcumulada = conMeta.reduce((acc, mm) => acc + mm.meta, 0);
@@ -119,8 +123,8 @@ export const ResumenView: React.FC = () => {
     return {
       maquinasConMeta: conMeta.length,
       maquinasSinMeta,
+      perfeccionCount,
       eficientesCount,
-      enProgresoCount,
       bajoCount,
       metaAcumulada,
       prodAcumulada,
@@ -159,9 +163,18 @@ export const ResumenView: React.FC = () => {
   const handleExportarMigracion = () => {
     try {
       exportarMigracion(filas, metaTurno.fecha, metaTurno.tipo);
-      showToast('ok', 'Excel de migración SAP exportado');
+      showToast('ok', 'Excel de migración exportado');
     } catch (err: any) {
       showToast('error', err.message || 'Error al exportar migración');
+    }
+  };
+
+  const handleExportarPdfVasos = () => {
+    try {
+      const res = exportarPdfEficienciaVasos(maquinas, turno, catalogo, metaTurno);
+      showToast('ok', `PDF generado: ${res.nombreArchivo}`);
+    } catch (err: any) {
+      showToast('error', err?.message || 'Error al generar el PDF de eficiencia de Vasos');
     }
   };
 
@@ -239,10 +252,19 @@ export const ResumenView: React.FC = () => {
               type="button"
               onClick={handleExportarMigracion}
               className="flex items-center gap-1 bg-[#3A2E1B] border border-[#F2A93B]/40 text-[#F6AD55] py-1.5 px-2.5 rounded-lg text-xs font-bold uppercase font-['Oswald',sans-serif] tracking-wider cursor-pointer hover:brightness-110 active:scale-95 transition-all shadow-sm"
-              title="Exportar archivo de migración para SAP"
+              title="Exportar archivo de migración"
             >
               <Download size={13} />
-              <span>SAP</span>
+              <span>Migración</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleExportarPdfVasos}
+              className="flex items-center gap-1 bg-[#2B6CB0] hover:bg-[#3182CE] text-white border border-[#63B3ED]/40 py-1.5 px-2.5 rounded-lg text-xs font-bold uppercase font-['Oswald',sans-serif] tracking-wider cursor-pointer active:scale-95 transition-all shadow-sm"
+              title="Descargar PDF con la gráfica de eficiencia de turno solo del área de Vasos"
+            >
+              <FileDown size={13} />
+              <span>PDF Vasos</span>
             </button>
             <button
               type="button"
@@ -322,9 +344,9 @@ export const ResumenView: React.FC = () => {
                   }`}
                 >
                   {resumenEficiencia.pctGlobal >= 100
-                    ? '✓ EFICIENTE'
+                    ? '★ PERFECCIÓN'
                     : resumenEficiencia.pctGlobal >= 80
-                    ? '⏳ EN PROGRESO'
+                    ? '✓ EFICIENTE'
                     : '⚠ BAJO META'}
                 </span>
               </div>
@@ -388,12 +410,12 @@ export const ResumenView: React.FC = () => {
 
               <div className="grid grid-cols-2 gap-2 text-center font-['IBM_Plex_Mono',monospace]">
                 <div className="bg-[#1A202C] p-2 rounded-lg border border-[#38A169]/30">
-                  <div className="text-[10px] text-[#A0AEC0] font-sans uppercase">Eficientes (≥100%)</div>
-                  <div className="text-lg font-bold text-[#48BB78]">{resumenEficiencia.eficientesCount}</div>
+                  <div className="text-[10px] text-[#A0AEC0] font-sans uppercase">Perfección (≥100%)</div>
+                  <div className="text-lg font-bold text-[#48BB78]">{resumenEficiencia.perfeccionCount}</div>
                 </div>
                 <div className="bg-[#1A202C] p-2 rounded-lg border border-[#F2A93B]/30">
-                  <div className="text-[10px] text-[#A0AEC0] font-sans uppercase">En Meta (80-99%)</div>
-                  <div className="text-lg font-bold text-[#F6AD55]">{resumenEficiencia.enProgresoCount}</div>
+                  <div className="text-[10px] text-[#A0AEC0] font-sans uppercase">Eficiente (80-99%)</div>
+                  <div className="text-lg font-bold text-[#F6AD55]">{resumenEficiencia.eficientesCount}</div>
                 </div>
                 <div className="bg-[#1A202C] p-2 rounded-lg border border-[#E53E3E]/30">
                   <div className="text-[10px] text-[#A0AEC0] font-sans uppercase">Bajo Meta (&lt;80%)</div>
@@ -406,7 +428,7 @@ export const ResumenView: React.FC = () => {
               </div>
 
               <div className="text-[11px] text-[#A0AEC0] text-center pt-1.5 border-t border-[#2D3748]/70">
-                {resumenEficiencia.eficientesCount} de {resumenEficiencia.maquinasConMeta} máquinas alcanzaron su cuota diaria
+                {resumenEficiencia.perfeccionCount + resumenEficiencia.eficientesCount} de {resumenEficiencia.maquinasConMeta} máquinas eficientes (≥80%)
               </div>
             </div>
 
@@ -486,9 +508,9 @@ export const ResumenView: React.FC = () => {
                     <div
                       key={mm.maquina.id}
                       className={`p-2.5 rounded-xl border transition-all ${
-                        mm.estado === 'eficiente'
-                          ? 'bg-[#232A38] border-[#38A169]/40'
-                          : mm.estado === 'progreso'
+                        mm.estado === 'perfeccion'
+                          ? 'bg-[#232A38] border-[#38A169]/50'
+                          : mm.estado === 'eficiente'
                           ? 'bg-[#232A38] border-[#F2A93B]/40'
                           : mm.estado === 'bajo'
                           ? 'bg-[#232A38] border-[#E53E3E]/40'
@@ -520,9 +542,9 @@ export const ResumenView: React.FC = () => {
                           <div className="w-full bg-[#12161F] rounded-full h-1.5 overflow-hidden border border-[#2D3748]">
                             <div
                               className={`h-full rounded-full transition-all duration-300 ${
-                                mm.estado === 'eficiente'
+                                mm.estado === 'perfeccion'
                                   ? 'bg-[#38A169]'
-                                  : mm.estado === 'progreso'
+                                  : mm.estado === 'eficiente'
                                   ? 'bg-[#F2A93B]'
                                   : 'bg-[#E53E3E]'
                               }`}
@@ -533,14 +555,14 @@ export const ResumenView: React.FC = () => {
                           <div className="flex items-center justify-between text-[10.5px] pt-0.5">
                             <span
                               className={`font-bold px-1.5 py-0.2 rounded font-['IBM_Plex_Mono',monospace] ${
-                                mm.estado === 'eficiente'
+                                mm.estado === 'perfeccion'
                                   ? 'bg-[#38A169]/20 text-[#48BB78]'
-                                  : mm.estado === 'progreso'
+                                  : mm.estado === 'eficiente'
                                   ? 'bg-[#F2A93B]/20 text-[#F6AD55]'
                                   : 'bg-[#E53E3E]/20 text-[#FC8181]'
                               }`}
                             >
-                              {pctFormatted}% {mm.estado === 'eficiente' ? '✓' : mm.estado === 'progreso' ? '⏳' : '⚠'}
+                              {pctFormatted}% {mm.estado === 'perfeccion' ? '★' : mm.estado === 'eficiente' ? '✓' : '⚠'}
                             </span>
                             <span
                               className={`font-['IBM_Plex_Mono',monospace] ${

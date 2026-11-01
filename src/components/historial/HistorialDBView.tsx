@@ -21,6 +21,7 @@ import {
   ChevronDown,
   ChevronUp,
   ShieldCheck,
+  TrendingUp,
 } from 'lucide-react';
 import {
   getSupabaseConfig,
@@ -35,10 +36,11 @@ import {
   resolverModelo,
   escapeHtml,
 } from '../../services/excel';
+import { exportarPdfEficienciaVasosDesdeFilas } from '../../services/pdfEficiencia';
 import { TurnoDBRow, FilaTurnoExcel } from '../../types';
 
 export const HistorialDBView: React.FC = () => {
-  const { session, setSession, showToast, catalogo } = useApp();
+  const { session, setSession, showToast, catalogo, maquinas } = useApp();
 
   // Login form (unauthenticated screen is strictly login-only)
   const [hdbUser, setHdbUser] = useState('');
@@ -391,6 +393,19 @@ export const HistorialDBView: React.FC = () => {
       w.focus();
       w.print();
     };
+  };
+
+  const handleDescargarPdfEficiencia = (rec: TurnoDBRow) => {
+    try {
+      const res = exportarPdfEficienciaVasosDesdeFilas(
+        rec.filas || [],
+        maquinas,
+        { fecha: rec.fecha, tipo: (rec.tipo as any) || 'dia' }
+      );
+      showToast('ok', `PDF generado: ${res.nombreArchivo}`);
+    } catch (err: any) {
+      showToast('error', err?.message || 'Error al generar PDF de eficiencia de Vasos');
+    }
   };
 
   // ================= VERSIONS MANAGEMENT (ADMIN ONLY) =================
@@ -1421,6 +1436,18 @@ export const HistorialDBView: React.FC = () => {
                     <span className="font-['IBM_Plex_Mono',monospace] font-bold text-xs sm:text-sm text-[#F2A93B] tabular-nums">
                       {tot.toLocaleString('es-PE')} u
                     </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDescargarPdfEficiencia(rec);
+                      }}
+                      className="py-1 px-2 text-[#10B981] bg-[#10B981]/15 hover:bg-[#10B981]/25 border border-[#10B981]/30 rounded-lg transition-colors cursor-pointer flex items-center gap-1 text-[11px] sm:text-xs font-semibold"
+                      title="Descargar PDF con Gráfica de Eficiencia de Vasos"
+                    >
+                      <TrendingUp size={13} />
+                      <span className="hidden sm:inline">Eficiencia</span>
+                    </button>
                     {puedeBorrar && (
                       <button
                         type="button"
@@ -1476,6 +1503,15 @@ export const HistorialDBView: React.FC = () => {
                       className="flex-1 sm:flex-initial bg-[#232A38] text-[#F6AD55] border border-[#F2A93B]/40 hover:bg-[#3A2E1B] py-1.5 px-2.5 rounded-lg text-xs font-semibold cursor-pointer active:scale-95"
                     >
                       Migración
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDescargarPdfEficiencia(rec)}
+                      className="flex-1 sm:flex-initial bg-[#10B981]/15 text-[#10B981] border border-[#10B981]/40 hover:bg-[#10B981]/25 py-1.5 px-2.5 rounded-lg text-xs font-bold cursor-pointer active:scale-95 flex items-center justify-center gap-1.5"
+                      title="Descargar PDF oficial con Gráfica de Eficiencia de Vasos"
+                    >
+                      <TrendingUp size={14} />
+                      <span>Eficiencia (PDF)</span>
                     </button>
                     <button
                       type="button"

@@ -87,6 +87,8 @@ export function loadInitialData() {
     if (typeof m.codigo === 'undefined') { m.codigo = ''; migroMaquinas = true; }
     if (typeof m.bloqueada === 'undefined') { m.bloqueada = !!m.codigoBloqueado; migroMaquinas = true; }
     if (typeof m.tipoProducto === 'undefined') { m.tipoProducto = ''; migroMaquinas = true; }
+    if (typeof m.meta === 'undefined') { m.meta = 0; migroMaquinas = true; }
+    if (typeof m.undPorMin === 'undefined') { m.undPorMin = 0; migroMaquinas = true; }
   });
   if (migroMaquinas) {
     try { localStorage.setItem(STORAGE_KEYS.MAQUINAS, JSON.stringify(maquinas)); } catch {}

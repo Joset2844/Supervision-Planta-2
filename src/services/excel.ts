@@ -214,6 +214,8 @@ export function parsearCodigosMaquinas(wb: XLSX.WorkBook, maquinasActuales: Maqu
   }
   const idxTipo = headers.findIndex((h) => h === 'tipo' || h.indexOf('tipo') === 0);
   const idxArea = headers.findIndex((h) => h === 'area' || h.indexOf('area') === 0);
+  const idxCantidad = headers.findIndex((h) => h === 'cantidad' || h.indexOf('cantidad') === 0 || h === 'meta' || h.indexOf('meta') === 0 || h === 'objetivo');
+  const idxUndMin = headers.findIndex((h) => h.indexOf('undxmin') !== -1 || h.indexOf('und/min') !== -1 || (h.indexOf('und') !== -1 && h.indexOf('min') !== -1));
 
   function leerTipo(r: any[]) {
     if (idxTipo === -1) return null;
@@ -227,6 +229,18 @@ export function parsearCodigosMaquinas(wb: XLSX.WorkBook, maquinasActuales: Maqu
     if (v === 'p') return 'papel_carton' as const;
     return null;
   }
+  function leerMeta(r: any[]): number {
+    if (idxCantidad === -1) return 0;
+    const raw = String(r[idxCantidad] ?? '').trim().replace(/,/g, '').replace(/\./g, '');
+    const n = parseInt(raw, 10);
+    return isNaN(n) ? 0 : Math.max(0, n);
+  }
+  function leerUndMin(r: any[]): number {
+    if (idxUndMin === -1) return 0;
+    const raw = String(r[idxUndMin] ?? '').trim().replace(/,/g, '');
+    const n = parseInt(raw, 10);
+    return isNaN(n) ? 0 : Math.max(0, n);
+  }
 
   const copiaMaquinas = [...maquinasActuales];
   let actualizadas = 0;
@@ -237,6 +251,8 @@ export function parsearCodigosMaquinas(wb: XLSX.WorkBook, maquinasActuales: Maqu
     const codigo = String(r[idxCodigo]).trim();
     const tipoNuevo = leerTipo(r);
     const areaNueva = leerArea(r);
+    const metaNueva = leerMeta(r);
+    const undMinNueva = leerUndMin(r);
     if (!nombre) return;
     const existente = copiaMaquinas.find((m) => m.nombre.trim().toLowerCase() === nombre.toLowerCase());
     if (existente) {
@@ -244,6 +260,8 @@ export function parsearCodigosMaquinas(wb: XLSX.WorkBook, maquinasActuales: Maqu
       existente.bloqueada = true;
       if (tipoNuevo) existente.tipoProducto = tipoNuevo;
       if (areaNueva) existente.area = areaNueva;
+      if (idxCantidad !== -1) existente.meta = metaNueva;
+      if (idxUndMin !== -1) existente.undPorMin = undMinNueva;
       actualizadas++;
     } else {
       copiaMaquinas.push({
@@ -254,6 +272,8 @@ export function parsearCodigosMaquinas(wb: XLSX.WorkBook, maquinasActuales: Maqu
         codigo,
         bloqueada: true,
         tipoProducto: tipoNuevo || '',
+        meta: metaNueva || 0,
+        undPorMin: undMinNueva || 0,
       });
       creadas++;
     }

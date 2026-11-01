@@ -38,6 +38,8 @@ export interface Maquina {
   bloqueada: boolean;
   tipoProducto: 'pp' | 'pt' | '';
   multiOp?: boolean;
+  meta?: number;
+  undPorMin?: number;
 }
 
 export interface RegistroTurno {

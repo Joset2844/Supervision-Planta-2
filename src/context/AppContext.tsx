@@ -22,7 +22,7 @@ import {
   sbFetch,
   saveSession,
 } from '../services/supabase';
-import { generarFilasTurno } from '../services/excel';
+import { generarFilasTurno, parsearCodigosMaquinas } from '../services/excel';
 import { generarReporteProduccion } from '../services/reports';
 
 export interface ToastMessage {
@@ -132,6 +132,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         navigator.storage.persist();
       }
     } catch {}
+
+    // Background sync of machines from Sheets to load latest CANTIDAD (meta) and codes
+    const sheetsUrl =
+      (typeof localStorage !== 'undefined' && localStorage.getItem(STORAGE_KEYS.URL_SHEETS_MAQUINAS)) ||
+      'https://docs.google.com/spreadsheets/d/e/2PACX-1vTVxCxG3XBMgSSedTqw7xWb7s7qxbYB3ZavS8MP9bx2lrwkzlK8oNQRSoFLw_sjjY68b1V0vNUaCb7B/pub?gid=770560989&single=true&output=csv';
+
+    if (sheetsUrl) {
+      fetch(sheetsUrl, { cache: 'no-store' })
+        .then((resp) => {
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          return resp.text();
+        })
+        .then(async (csvTexto) => {
+          const XLSX = await import('xlsx');
+          const wb = XLSX.read(csvTexto, { type: 'string' });
+          setMaquinasState((prev) => {
+            const res = parsearCodigosMaquinas(wb, prev);
+            saveStorageItem(STORAGE_KEYS.MAQUINAS, res.maquinas);
+            if (res.maquinas.length) saveStorageItem(STORAGE_KEYS.MAQUINAS_BAK, res.maquinas);
+            return res.maquinas;
+          });
+        })
+        .catch(() => {});
+    }
   }, []);
 
   // Save wrappers

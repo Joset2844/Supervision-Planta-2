@@ -762,8 +762,10 @@ export const ProduccionView: React.FC = () => {
         </div>
       )}
 
-      {/* Turno Odometer: Space-efficient */}
-      <Odometer label="Total Producido (Turno Activo)" value={totalProducidoGeneral} />
+      {/* Turno Odometer */}
+      <div>
+        <Odometer label="Total Producido (Turno Activo)" value={totalProducidoGeneral} />
+      </div>
 
       {/* Active Machines Cards: 1 column on mobile, 2 columns on tablet/desktop, 3 on wide screens */}
       {activas.length === 0 ? (
@@ -774,6 +776,13 @@ export const ProduccionView: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {activas.map((m) => {
             const instancias = turnosDeMaquina(m, turno);
+            const metaDiaria = m.meta || 0;
+            const tieneMeta = metaDiaria > 0;
+            const totalMaquinaDia = instancias.reduce((acc, instTurno) => {
+              return acc + (instTurno.registros || []).reduce((rAcc, r) => rAcc + (r.cantidad || 0), 0);
+            }, 0);
+            const pctEficiencia = tieneMeta ? (totalMaquinaDia / metaDiaria) * 100 : 0;
+
             return (
               <React.Fragment key={m.id}>
                 {instancias.map((t) => {
@@ -881,6 +890,20 @@ export const ProduccionView: React.FC = () => {
                           </div>
                         </div>
                       </div>
+
+                      {/* Visual Progress Bar under Header indicating target completion */}
+                      {tieneMeta && (
+                        <div className="mt-1.5" onClick={() => toggleExpand(cardKey)}>
+                          <div className="w-full bg-[#12161F] rounded-full h-1.5 overflow-hidden border border-[#2D3748]/70">
+                            <div
+                              className={`h-full rounded-full transition-all duration-300 ${
+                                pctEficiencia >= 100 ? 'bg-[#38A169]' : pctEficiencia >= 80 ? 'bg-[#F2A93B]' : 'bg-[#E53E3E]'
+                              }`}
+                              style={{ width: `${Math.min(100, Math.max(0, pctEficiencia))}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
 
                       {/* Expanded Detail Panel */}
                       {expandido && (

@@ -65,6 +65,8 @@ export const MaquinasView: React.FC = () => {
       codigo: '',
       bloqueada: false,
       tipoProducto: '',
+      meta: 0,
+      undPorMin: 0,
     }));
 
     setMaquinas((prev) => [...nuevas, ...prev]);
@@ -97,7 +99,7 @@ export const MaquinasView: React.FC = () => {
     try {
       actual = localStorage.getItem(STORAGE_KEYS.URL_SHEETS_MAQUINAS) || DEFAULT_URL_SHEETS_MAQUINAS;
     } catch {}
-    const nueva = prompt('Link de la hoja de MÁQUINAS (columnas MAQUINA, CODIGO, TIPO, AREA, publicada como CSV):', actual);
+    const nueva = prompt('Link de la hoja de MÁQUINAS (columnas MAQUINA, CODIGO, TIPO, AREA, CANTIDAD, publicada como CSV):', actual);
     if (nueva === null) return;
     const trimmed = nueva.trim();
     if (!trimmed) {
@@ -652,17 +654,29 @@ export const MaquinasView: React.FC = () => {
                           </div>
 
                           {/* Area & Code edit (or badge when locked) */}
-                          <div className="flex items-center gap-1.5 shrink-0">
+                          <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
                             {m.bloqueada ? (
-                              <span className="text-[10px] sm:text-[11px] font-medium text-[#A0AEC0] bg-[#232A38]/90 px-2 py-0.5 rounded border border-[#2D3748]">
-                                {m.area === 'vasos_envases'
-                                  ? 'Vasos y Env.'
-                                  : m.area === 'papel_carton'
-                                  ? 'Papel y Cart.'
-                                  : 'Sin área'}
-                              </span>
+                              <>
+                                <span className="text-[10px] sm:text-[11px] font-medium text-[#A0AEC0] bg-[#232A38]/90 px-2 py-0.5 rounded border border-[#2D3748]">
+                                  {m.area === 'vasos_envases'
+                                    ? 'Vasos y Env.'
+                                    : m.area === 'papel_carton'
+                                    ? 'Papel y Cart.'
+                                    : 'Sin área'}
+                                </span>
+                                <span
+                                  className={`text-[10px] sm:text-[11px] font-['IBM_Plex_Mono',monospace] font-bold px-2 py-0.5 rounded border ${
+                                    (m.meta || 0) > 0
+                                      ? 'bg-[#38A169]/15 text-[#48BB78] border-[#38A169]/30'
+                                      : 'bg-[#232A38] text-[#718096] border-[#2D3748]'
+                                  }`}
+                                  title={(m.meta || 0) > 0 ? `Meta diaria: ${(m.meta || 0).toLocaleString('es-PE')} u` : 'Sin meta (no mide eficiencia)'}
+                                >
+                                  {(m.meta || 0) > 0 ? `Meta: ${(m.meta || 0).toLocaleString('es-PE')} u` : 'Sin meta'}
+                                </span>
+                              </>
                             ) : (
-                              <div className="flex items-center gap-1.5">
+                              <div className="flex items-center gap-1.5 flex-wrap">
                                 <select
                                   value={m.area || ''}
                                   onChange={(e) => handleUpdateMaquina(m.id, { area: e.target.value as any })}
@@ -681,6 +695,17 @@ export const MaquinasView: React.FC = () => {
                                   title="Código de máquina"
                                   className="w-16 sm:w-20 py-1 px-2 rounded-lg border border-[#4A5568] text-xs font-['IBM_Plex_Mono',monospace] bg-[#232A38] text-white outline-none focus:border-[#F2A93B]"
                                 />
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[10px] text-[#A0AEC0] uppercase font-bold">Meta:</span>
+                                  <input
+                                    type="number"
+                                    value={m.meta ?? 0}
+                                    onChange={(e) => handleUpdateMaquina(m.id, { meta: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+                                    placeholder="0"
+                                    title="Meta diaria (CANTIDAD)"
+                                    className="w-16 sm:w-24 py-1 px-2 rounded-lg border border-[#4A5568] text-xs font-['IBM_Plex_Mono',monospace] bg-[#232A38] text-white outline-none focus:border-[#F2A93B]"
+                                  />
+                                </div>
                               </div>
                             )}
                           </div>

@@ -71,6 +71,52 @@ export function descripcionCorta(match: CatalogoItem | null): string {
 }
 
 // ----------------- PARSING CATALOGO -----------------
+export function parsearCantidad(raw: any): number {
+  if (raw === null || raw === undefined || raw === '') return 0;
+  if (typeof raw === 'number') {
+    return isNaN(raw) ? 0 : Math.round(raw);
+  }
+  const s = String(raw).trim();
+  if (!s) return 0;
+  // Clean spaces and thousands separators (e.g. 15,000 or 15.000 or 15 000)
+  let clean = s.replace(/[^0-9.,-]/g, '').trim();
+  if (!clean) return 0;
+
+  if (/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(clean)) {
+    clean = clean.replace(/,/g, '');
+  } else if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(clean)) {
+    clean = clean.replace(/\./g, '').replace(/,/g, '.');
+  } else if (clean.includes(',') && !clean.includes('.')) {
+    clean = clean.replace(/,/g, '');
+  }
+
+  const n = parseFloat(clean);
+  return isNaN(n) ? 0 : Math.round(n);
+}
+
+export function esColumnaCantidad(h: string): boolean {
+  if (!h) return false;
+  const s = h.toLowerCase().trim();
+  return (
+    s.includes('cantidad') ||
+    s === 'cant' ||
+    s.startsWith('cant') ||
+    s.includes('cant.') ||
+    s.includes('cant ') ||
+    s.includes('total') ||
+    s.includes('unidade') ||
+    s === 'und' ||
+    s === 'unds' ||
+    s === 'unid' ||
+    s.includes('pedido') ||
+    s.includes('programad') ||
+    s === 'meta' ||
+    s === 'objetivo' ||
+    s === 'ctd' ||
+    s === 'ctdad'
+  );
+}
+
 function buscarBase(mapa: Record<string, any>, op: string) {
   if (mapa[op]) return mapa[op];
   const k = Object.keys(mapa).find((x) => x.trim().toLowerCase() === op.trim().toLowerCase());
@@ -81,11 +127,11 @@ function parsearHojaCatalogo(sheet: any) {
   const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
   if (rows.length < 2) return null;
   const headers = rows[0].map(normalizar);
-  const idxOp = headers.findIndex((h) => h.indexOf('op') !== -1);
-  const idxDesc = headers.findIndex((h) => h.indexOf('descripcion') !== -1);
-  const idxCliente = headers.findIndex((h) => h.indexOf('cliente') !== -1);
-  const idxCantidad = headers.findIndex((h) => h.indexOf('cantidad') !== -1 || h.indexOf('total') !== -1);
-  const idxSap = headers.findIndex((h) => h.indexOf('sap') !== -1);
+  const idxOp = headers.findIndex((h) => h === 'op' || h.indexOf('op') !== -1);
+  const idxDesc = headers.findIndex((h) => h.indexOf('descripcion') !== -1 || h.indexOf('producto') !== -1 || h.indexOf('articulo') !== -1);
+  const idxCliente = headers.findIndex((h) => h.indexOf('cliente') !== -1 || h.indexOf('razon') !== -1);
+  const idxCantidad = headers.findIndex(esColumnaCantidad);
+  const idxSap = headers.findIndex((h) => h.indexOf('sap') !== -1 || h.indexOf('codigo') !== -1);
   if (idxOp === -1 || idxDesc === -1 || idxCliente === -1) return null;
 
   const filasValidas = rows.slice(1).filter((r) => String(r[idxOp]).trim() !== '');
@@ -95,11 +141,13 @@ function parsearHojaCatalogo(sheet: any) {
   filasValidas.forEach((r) => {
     const op = String(r[idxOp]).trim();
     const cliente = String(r[idxCliente]).trim();
-    const cantidad = idxCantidad !== -1 ? String(r[idxCantidad]).trim() : '';
+    const cantNum = idxCantidad !== -1 ? parsearCantidad(r[idxCantidad]) : 0;
+    const desc = String(r[idxDesc]).trim();
+    const sap = idxSap !== -1 ? String(r[idxSap]).trim() : '';
     const modelo: CatalogoModelo = {
-      descripcion: String(r[idxDesc]).trim(),
-      sap: idxSap !== -1 ? String(r[idxSap]).trim() : '',
-      cantidadTotal: cantidad,
+      descripcion: desc,
+      sap: sap,
+      cantidadTotal: cantNum,
     };
     if (!mapaOps[op]) {
       mapaOps[op] = { op, cliente, cantidadTotal: 0, modelos: [] };
@@ -108,9 +156,18 @@ function parsearHojaCatalogo(sheet: any) {
     const yaExiste = mapaOps[op].modelos.some((mo: any) => {
       return mo.descripcion === modelo.descripcion && (mo.sap || '') === (modelo.sap || '');
     });
-    if (!yaExiste) mapaOps[op].modelos.push(modelo);
-    const n = parseInt(cantidad, 10);
-    if (!isNaN(n)) mapaOps[op].cantidadTotal += n;
+    if (!yaExiste) {
+      mapaOps[op].modelos.push(modelo);
+    } else {
+      const idxExistente = mapaOps[op].modelos.findIndex(
+        (mo: any) => mo.descripcion === modelo.descripcion && (mo.sap || '') === (modelo.sap || '')
+      );
+      if (idxExistente !== -1 && cantNum > 0) {
+        const cantPrev = parsearCantidad(mapaOps[op].modelos[idxExistente].cantidadTotal);
+        mapaOps[op].modelos[idxExistente].cantidadTotal = cantPrev + cantNum;
+      }
+    }
+    mapaOps[op].cantidadTotal += cantNum;
   });
   return { mapaOps, ordenOps };
 }
@@ -119,10 +176,10 @@ function parsearHojaModelos(sheet: any, mapaBase: Record<string, any>) {
   const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
   if (rows.length < 2) return null;
   const headers = rows[0].map(normalizar);
-  const idxOp = headers.findIndex((h) => h.indexOf('op') !== -1);
-  const idxModelo = headers.findIndex((h) => h.indexOf('modelo') !== -1);
-  const idxCantidad = headers.findIndex((h) => h.indexOf('cantidad') !== -1 || h.indexOf('total') !== -1);
-  const idxSap = headers.findIndex((h) => h.indexOf('sap') !== -1);
+  const idxOp = headers.findIndex((h) => h === 'op' || h.indexOf('op') !== -1);
+  const idxModelo = headers.findIndex((h) => h.indexOf('modelo') !== -1 || h.indexOf('descripcion') !== -1 || h.indexOf('producto') !== -1);
+  const idxCantidad = headers.findIndex(esColumnaCantidad);
+  const idxSap = headers.findIndex((h) => h.indexOf('sap') !== -1 || h.indexOf('codigo') !== -1);
   if (idxOp === -1 || idxModelo === -1) return null;
 
   const filasValidas = rows.slice(1).filter((r) => String(r[idxOp]).trim() !== '');
@@ -132,26 +189,38 @@ function parsearHojaModelos(sheet: any, mapaBase: Record<string, any>) {
   filasValidas.forEach((r) => {
     const op = String(r[idxOp]).trim();
     const modeloTxt = String(r[idxModelo]).trim();
-    const cantidad = idxCantidad !== -1 ? String(r[idxCantidad]).trim() : '';
+    const cantNum = idxCantidad !== -1 ? parsearCantidad(r[idxCantidad]) : 0;
     const base = buscarBase(mapaBase, op);
     const descBase = base ? (base.modelos && base.modelos[0] ? base.modelos[0].descripcion : (base.descripcion || '')) : '';
-    const descripcionFinal = descBase ? `${descBase} - ${modeloTxt}` : modeloTxt;
+    const descripcionFinal =
+      descBase && !modeloTxt.toLowerCase().includes(descBase.toLowerCase())
+        ? `${descBase} - ${modeloTxt}`
+        : modeloTxt;
     const modelo: CatalogoModelo = {
       modelo: modeloTxt,
       descripcion: descripcionFinal,
       sap: idxSap !== -1 ? String(r[idxSap]).trim() : '',
-      cantidadTotal: cantidad,
+      cantidadTotal: cantNum,
     };
     if (!mapaOps[op]) {
       mapaOps[op] = { op, cliente: base ? base.cliente : '', cantidadTotal: 0, modelos: [] };
       ordenOps.push(op);
     }
     const yaExisteModelo = mapaOps[op].modelos.some((mo: any) => {
-      return mo.modelo === modeloTxt && mo.sap === modelo.sap;
+      return (mo.modelo === modeloTxt || mo.descripcion === descripcionFinal) && mo.sap === modelo.sap;
     });
-    if (!yaExisteModelo) mapaOps[op].modelos.push(modelo);
-    const n = parseInt(cantidad, 10);
-    if (!isNaN(n)) mapaOps[op].cantidadTotal += n;
+    if (!yaExisteModelo) {
+      mapaOps[op].modelos.push(modelo);
+    } else {
+      const idxM = mapaOps[op].modelos.findIndex(
+        (mo: any) => (mo.modelo === modeloTxt || mo.descripcion === descripcionFinal) && mo.sap === modelo.sap
+      );
+      if (idxM !== -1 && cantNum > 0) {
+        const cantPrev = parsearCantidad(mapaOps[op].modelos[idxM].cantidadTotal);
+        mapaOps[op].modelos[idxM].cantidadTotal = cantPrev + cantNum;
+      }
+    }
+    mapaOps[op].cantidadTotal += cantNum;
   });
   return { mapaOps, ordenOps };
 }
@@ -167,27 +236,57 @@ export function construirCatalogo(sheetPrincipal: any, sheetModelos: any): Catal
     const modelos = parsearHojaModelos(sheetModelos, principal.mapaOps);
     if (modelos) {
       modelos.ordenOps.forEach((op) => {
-        if (!mapaFinal[op]) ordenFinal.push(op);
         const base = buscarBase(principal.mapaOps, op);
-        const descripcionBase = base && base.modelos[0] ? base.modelos[0].descripcion : '';
-        mapaFinal[op] = modelos.mapaOps[op];
-        mapaFinal[op].descripcionBase = descripcionBase;
+        const modelosData = modelos.mapaOps[op];
+
+        if (!mapaFinal[op]) {
+          ordenFinal.push(op);
+          mapaFinal[op] = modelosData;
+        } else {
+          const descBase = base && base.modelos[0] ? base.modelos[0].descripcion : (base?.descripcion || '');
+          // If models sheet has quantities, use sum of models, otherwise preserve base quantity
+          const cantModelos = modelosData.cantidadTotal || 0;
+          const cantBase = base ? (base.cantidadTotal || 0) : 0;
+          const cantFinal = cantModelos > 0 ? cantModelos : cantBase;
+
+          mapaFinal[op] = {
+            ...modelosData,
+            cliente: base ? base.cliente : modelosData.cliente,
+            cantidadTotal: cantFinal,
+            descripcionBase: descBase,
+          };
+        }
       });
     }
   }
 
   const nuevo: CatalogoItem[] = ordenFinal.map((op) => {
     const item = mapaFinal[op];
-    if (item.modelos.length > 1) {
-      item.descripcion = 'Varios modelos (' + item.modelos.length + ')';
-      item.sap = '';
-      if (!item.descripcionBase) item.descripcionBase = item.modelos[0].descripcion;
-    } else {
-      item.descripcion = item.modelos[0].descripcion;
-      item.sap = item.modelos[0].sap;
-      item.descripcionBase = item.modelos[0].descripcion;
+    const tieneMultiples = item.modelos && item.modelos.length > 1;
+
+    // Calculate total from models sum if available, or item.cantidadTotal
+    let totalOp = parsearCantidad(item.cantidadTotal);
+    if (item.modelos && item.modelos.length > 0) {
+      const sumModelos = item.modelos.reduce(
+        (acc: number, m: any) => acc + parsearCantidad(m.cantidadTotal),
+        0
+      );
+      if (sumModelos > 0) {
+        totalOp = sumModelos;
+      }
     }
-    return item;
+
+    return {
+      op: item.op,
+      cliente: item.cliente || '',
+      cantidadTotal: totalOp,
+      descripcion: tieneMultiples
+        ? 'Varios modelos (' + item.modelos.length + ')'
+        : item.modelos[0]?.descripcion || item.descripcion || '',
+      sap: tieneMultiples ? '' : item.modelos[0]?.sap || item.sap || '',
+      descripcionBase: item.descripcionBase || item.modelos[0]?.descripcion || item.descripcion || '',
+      modelos: item.modelos || [],
+    };
   });
 
   return nuevo;

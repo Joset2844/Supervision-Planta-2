@@ -1032,15 +1032,32 @@ export const ProduccionView: React.FC = () => {
                                             : 'bg-[#1A202C] text-[#CBD5E0] border-[#4A5568]'
                                         }`}
                                       >
-                                        {mo.descripcion || `Mod ${i + 1}`}
+                                        <span>{mo.descripcion || `Mod ${i + 1}`}</span>
+                                        {mo.cantidadTotal && Number(mo.cantidadTotal) > 0 ? (
+                                          <span className="ml-1 text-[9.5px] opacity-90 font-['IBM_Plex_Mono',monospace] font-bold">
+                                            ({Number(mo.cantidadTotal).toLocaleString('es-PE')} u)
+                                          </span>
+                                        ) : null}
                                       </button>
                                     ))}
                                   </div>
                                 )}
 
                                 {currentMatch && (
-                                  <div className="text-[11px] text-[#CBD5E0] truncate bg-[#232A38] px-2 py-1 rounded">
-                                    {resolverModelo(currentMatch, t.modeloIdx).descripcion} · <span className="text-[#A0AEC0]">{currentMatch.cliente}</span>
+                                  <div className="text-[11px] text-[#CBD5E0] bg-[#232A38] px-2 py-1 rounded flex items-center justify-between gap-1 flex-wrap">
+                                    <span className="truncate">
+                                      {resolverModelo(currentMatch, t.modeloIdx).descripcion} · <span className="text-[#A0AEC0]">{currentMatch.cliente}</span>
+                                    </span>
+                                    {(() => {
+                                      const mod = t.modeloIdx >= 0 && currentMatch.modelos && currentMatch.modelos[t.modeloIdx];
+                                      const cant = mod && mod.cantidadTotal ? mod.cantidadTotal : currentMatch.cantidadTotal;
+                                      if (!cant || Number(cant) <= 0) return null;
+                                      return (
+                                        <span className="text-[#F2A93B] font-['IBM_Plex_Mono',monospace] font-bold text-[10.5px]">
+                                          Cant. {mod && mod.cantidadTotal ? 'modelo' : 'orden'}: {Number(cant).toLocaleString('es-PE')} u
+                                        </span>
+                                      );
+                                    })()}
                                   </div>
                                 )}
                               </div>
@@ -1123,9 +1140,16 @@ export const ProduccionView: React.FC = () => {
                                             className="w-full text-left py-2 px-2.5 hover:bg-[#232A38] active:bg-[#2D3748] text-xs block text-white transition-colors cursor-pointer group"
                                           >
                                             <div className="flex items-center justify-between gap-1.5 mb-0.5">
-                                              <span className="font-bold text-[#F2A93B] group-hover:text-[#F6AD55] font-['IBM_Plex_Mono',monospace] text-xs px-1.5 py-0.2 rounded bg-[#232A38] border border-[#4A5568]">
-                                                {item.op}
-                                              </span>
+                                              <div className="flex items-center gap-1.5 flex-wrap">
+                                                <span className="font-bold text-[#F2A93B] group-hover:text-[#F6AD55] font-['IBM_Plex_Mono',monospace] text-xs px-1.5 py-0.2 rounded bg-[#232A38] border border-[#4A5568]">
+                                                  {item.op}
+                                                </span>
+                                                {item.cantidadTotal && Number(item.cantidadTotal) > 0 ? (
+                                                  <span className="text-[#F6AD55] font-['IBM_Plex_Mono',monospace] text-[10px] font-bold bg-[#1A202C] px-1.5 py-0.2 rounded border border-[#4A5568]">
+                                                    {Number(item.cantidadTotal).toLocaleString('es-PE')} u
+                                                  </span>
+                                                ) : null}
+                                              </div>
                                               <div className="flex items-center gap-1">
                                                 {item.modelos && item.modelos.length > 1 && (
                                                   <span className="text-[9px] px-1 py-0.2 rounded bg-[#4A5568]/40 text-[#CBD5E0]">

@@ -10,10 +10,12 @@ import { CatalogoItem, ListaItem } from '../../types';
 export const InventarioView: React.FC = () => {
   const {
     catalogo,
+    setCatalogo,
     lista,
     setLista,
     subTabInventario,
     showToast,
+    session,
     sincronizarCatalogoSupabase,
     subirCatalogoASupabase,
   } = useApp();
@@ -207,7 +209,12 @@ export const InventarioView: React.FC = () => {
         const wb = XLSX.read(data, { type: 'array' });
         const nuevo = procesarWorkbookCatalogo(wb);
         if (nuevo) {
-          await subirCatalogoASupabase(nuevo);
+          setCatalogo(nuevo);
+          if (session) {
+            await subirCatalogoASupabase(nuevo);
+          } else {
+            showToast('ok', `Catálogo cargado: ${nuevo.length} OP importadas con cantidades.`);
+          }
         } else {
           showToast('error', 'Debe tener columnas OP, Descripción y Cliente');
         }
@@ -309,7 +316,11 @@ export const InventarioView: React.FC = () => {
 
   const copiarInfoOp = async (r: CatalogoItem) => {
     const desc = r.modelos && r.modelos.length > 1 && r.descripcionBase ? r.descripcionBase : r.descripcion;
-    const txt = `OP: ${r.op}\nDescripción: ${desc}\nCliente: ${r.cliente}`;
+    const cantTxt =
+      r.cantidadTotal && Number(r.cantidadTotal) > 0
+        ? `\nCantidad Orden: ${Number(r.cantidadTotal).toLocaleString('es-PE')} u`
+        : '';
+    const txt = `OP: ${r.op}\nDescripción: ${desc}\nCliente: ${r.cliente}${cantTxt}`;
     const ok = await copiarAlPortapapeles(txt);
     showToast(ok ? 'ok' : 'error', ok ? `Copiado: ${r.op}` : 'No se pudo copiar');
   };
@@ -317,8 +328,12 @@ export const InventarioView: React.FC = () => {
   const copiarModelosOp = async (r: CatalogoItem) => {
     if (!r.modelos) return;
     const base = r.descripcionBase || '';
+    const cantTotalTxt =
+      r.cantidadTotal && Number(r.cantidadTotal) > 0
+        ? `${Number(r.cantidadTotal).toLocaleString('es-PE')} u`
+        : '—';
     const txt =
-      `OP: ${r.op}\nDescripción: ${base}\nCliente: ${r.cliente}\nCantidad: ${r.cantidadTotal || ''}\nMODELOS:\n` +
+      `OP: ${r.op}\nDescripción: ${base}\nCliente: ${r.cliente}\nCantidad Total: ${cantTotalTxt}\nMODELOS:\n` +
       r.modelos
         .map((mo) => {
           let nombre = mo.modelo;
@@ -326,7 +341,12 @@ export const InventarioView: React.FC = () => {
             nombre = mo.descripcion || '';
             if (base && nombre.indexOf(base + ' - ') === 0) nombre = nombre.slice(base.length + 3);
           }
-          return `- ${nombre}${mo.cantidadTotal ? ' - ' + mo.cantidadTotal : ''}`;
+          const cantMo =
+            mo.cantidadTotal && Number(mo.cantidadTotal) > 0
+              ? ` - ${Number(mo.cantidadTotal).toLocaleString('es-PE')} u`
+              : '';
+          const sapMo = mo.sap ? ` (SAP ${mo.sap})` : '';
+          return `- ${nombre}${cantMo}${sapMo}`;
         })
         .join('\n');
     const ok = await copiarAlPortapapeles(txt);
@@ -473,9 +493,16 @@ export const InventarioView: React.FC = () => {
                           className="w-full text-left py-2 px-3 hover:bg-[#232A38] active:bg-[#2D3748] text-xs block text-white transition-colors cursor-pointer group"
                         >
                           <div className="flex items-center justify-between gap-1.5 mb-0.5">
-                            <span className="font-bold text-[#F2A93B] group-hover:text-[#F6AD55] font-['IBM_Plex_Mono',monospace] text-xs px-1.5 py-0.5 rounded bg-[#232A38] border border-[#4A5568]/80">
-                              {item.op}
-                            </span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-bold text-[#F2A93B] group-hover:text-[#F6AD55] font-['IBM_Plex_Mono',monospace] text-xs px-1.5 py-0.5 rounded bg-[#232A38] border border-[#4A5568]/80">
+                                {item.op}
+                              </span>
+                              {item.cantidadTotal && Number(item.cantidadTotal) > 0 ? (
+                                <span className="text-[10px] font-bold text-[#F6AD55] font-['IBM_Plex_Mono',monospace] bg-[#1A202C] px-1.5 py-0.2 rounded border border-[#4A5568]">
+                                  {Number(item.cantidadTotal).toLocaleString('es-PE')} u
+                                </span>
+                              ) : null}
+                            </div>
                             <div className="flex items-center gap-1">
                               {item.modelos && item.modelos.length > 1 && (
                                 <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-[#4A5568]/40 text-[#CBD5E0]">
@@ -507,6 +534,14 @@ export const InventarioView: React.FC = () => {
               )}
             </div>
 
+            {/* Matched OP order info banner if found */}
+            {matchActual && matchActual.cantidadTotal && Number(matchActual.cantidadTotal) > 0 && (
+              <div className="mb-2 px-2.5 py-1.5 bg-[#232A38] rounded-lg border border-[#F2A93B]/30 flex items-center justify-between text-xs font-['IBM_Plex_Mono',monospace]">
+                <span className="text-[#CBD5E0] text-[11px]">Cantidad total de la orden:</span>
+                <span className="font-bold text-[#F6AD55]">{Number(matchActual.cantidadTotal).toLocaleString('es-PE')} u</span>
+              </div>
+            )}
+
             {/* Model chips if multi-model */}
             {matchActual && matchActual.modelos && matchActual.modelos.length > 1 && (
               <div className="mb-2 p-2 bg-[#232A38] rounded-lg border border-[#2D3748]">
@@ -536,7 +571,12 @@ export const InventarioView: React.FC = () => {
                           : 'bg-[#1A202C] text-[#CBD5E0] border-[#4A5568] hover:text-white'
                       }`}
                     >
-                      {m.descripcion || `Modelo ${idx + 1}`}
+                      <span>{m.descripcion || `Modelo ${idx + 1}`}</span>
+                      {m.cantidadTotal && Number(m.cantidadTotal) > 0 ? (
+                        <span className="ml-1 text-[9.5px] opacity-90 font-['IBM_Plex_Mono',monospace] font-bold">
+                          ({Number(m.cantidadTotal).toLocaleString('es-PE')} u)
+                        </span>
+                      ) : null}
                     </button>
                   ))}
                 </div>
@@ -872,9 +912,20 @@ export const InventarioView: React.FC = () => {
                       className="bg-[#1A202C] border border-[#2D3748] rounded-xl p-2.5 space-y-1.5 shadow-sm"
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="font-['IBM_Plex_Mono',monospace] font-bold text-[#F6AD55] text-xs">
-                          {r.op}
-                        </span>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-['IBM_Plex_Mono',monospace] font-bold text-[#F6AD55] text-xs">
+                            {r.op}
+                          </span>
+                          {r.cantidadTotal && Number(r.cantidadTotal) > 0 ? (
+                            <span className="bg-[#F2A93B]/20 text-[#F6AD55] border border-[#F2A93B]/40 px-1.5 py-0.5 rounded text-[10.5px] font-bold font-['IBM_Plex_Mono',monospace]">
+                              {Number(r.cantidadTotal).toLocaleString('es-PE')} u
+                            </span>
+                          ) : (
+                            <span className="text-[#A0AEC0] text-[10px] font-['IBM_Plex_Mono',monospace]">
+                              Sin cant.
+                            </span>
+                          )}
+                        </div>
                         <div className="flex items-center gap-1">
                           <button
                             type="button"
@@ -914,13 +965,22 @@ export const InventarioView: React.FC = () => {
                           <span className="text-[10px] font-semibold text-[#F2A93B] uppercase tracking-wide block">
                             Modelos asociados ({r.modelos.length}):
                           </span>
-                          <ul className="m-0 pl-3 list-disc text-[11px] text-[#CBD5E0] space-y-0.5">
+                          <ul className="m-0 pl-3 list-disc text-[11px] text-[#CBD5E0] space-y-1">
                             {r.modelos.map((mo, i) => (
                               <li key={i}>
-                                <span className="text-white">{mo.descripcion}</span>
-                                {mo.sap && (
-                                  <span className="font-['IBM_Plex_Mono',monospace] text-[#A0AEC0]"> · SAP {mo.sap}</span>
-                                )}
+                                <div className="flex items-center justify-between gap-1 flex-wrap">
+                                  <span className="text-white font-medium">{mo.descripcion}</span>
+                                  <div className="flex items-center gap-1.5 text-[10px]">
+                                    {mo.cantidadTotal && Number(mo.cantidadTotal) > 0 ? (
+                                      <span className="text-[#F6AD55] font-['IBM_Plex_Mono',monospace] font-bold bg-[#1A202C] px-1.5 py-0.2 rounded border border-[#4A5568]">
+                                        {Number(mo.cantidadTotal).toLocaleString('es-PE')} u
+                                      </span>
+                                    ) : null}
+                                    {mo.sap && (
+                                      <span className="font-['IBM_Plex_Mono',monospace] text-[#A0AEC0]"> · SAP {mo.sap}</span>
+                                    )}
+                                  </div>
+                                </div>
                               </li>
                             ))}
                           </ul>
@@ -965,8 +1025,14 @@ export const InventarioView: React.FC = () => {
                             </td>
                             <td className="py-2 px-3 text-white font-medium">{r.descripcion}</td>
                             <td className="py-2 px-3 text-[#CBD5E0]">{r.cliente}</td>
-                            <td className="py-2 px-3 font-['IBM_Plex_Mono',monospace] text-[#CBD5E0] tabular-nums">
-                              {r.cantidadTotal || '—'}
+                            <td className="py-2 px-3 font-['IBM_Plex_Mono',monospace] tabular-nums">
+                              {r.cantidadTotal && Number(r.cantidadTotal) > 0 ? (
+                                <span className="font-bold text-[#F6AD55]">
+                                  {Number(r.cantidadTotal).toLocaleString('es-PE')} u
+                                </span>
+                              ) : (
+                                <span className="text-[#718096]">—</span>
+                              )}
                             </td>
                             <td className="py-2 px-3 font-['IBM_Plex_Mono',monospace] text-[#CBD5E0]">
                               {r.sap || '—'}
@@ -998,20 +1064,22 @@ export const InventarioView: React.FC = () => {
                             <tr className="border-b border-[#2D3748] bg-[#1A202C]/60">
                               <td />
                               <td colSpan={5} className="py-1.5 px-3 pb-2">
-                                <ul className="m-0 pl-3 list-disc text-[11px] text-[#CBD5E0] space-y-0.5">
+                                <ul className="m-0 pl-3 list-disc text-[11px] text-[#CBD5E0] space-y-1">
                                   {r.modelos.map((mo, i) => (
                                     <li key={i}>
                                       <span className="text-white font-medium">{mo.descripcion}</span>
+                                      {mo.cantidadTotal && Number(mo.cantidadTotal) > 0 ? (
+                                        <>
+                                          {' · Cant: '}
+                                          <span className="font-['IBM_Plex_Mono',monospace] font-bold text-[#F6AD55] bg-[#232A38] px-1.5 py-0.5 rounded border border-[#4A5568]">
+                                            {Number(mo.cantidadTotal).toLocaleString('es-PE')} u
+                                          </span>
+                                        </>
+                                      ) : null}
                                       {mo.sap && (
                                         <>
                                           {' · SAP '}
-                                          <span className="font-['IBM_Plex_Mono',monospace] text-[#F6AD55]">{mo.sap}</span>
-                                        </>
-                                      )}
-                                      {mo.cantidadTotal && (
-                                        <>
-                                          {' · Cant. '}
-                                          <span className="font-['IBM_Plex_Mono',monospace]">{mo.cantidadTotal}</span>
+                                          <span className="font-['IBM_Plex_Mono',monospace] text-[#A0AEC0]">{mo.sap}</span>
                                         </>
                                       )}
                                     </li>

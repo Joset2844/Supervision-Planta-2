@@ -31,12 +31,40 @@ export function loadInitialData() {
   let migroCatalogo = false;
   catalogo.forEach((item: any) => {
     if (!item.modelos) {
-      item.modelos = [{ descripcion: item.descripcion || '', sap: item.sap || '', cantidadTotal: item.cantidadTotal || '' }];
+      item.modelos = [{ descripcion: item.descripcion || '', sap: item.sap || '', cantidadTotal: item.cantidadTotal || 0 }];
       migroCatalogo = true;
     }
     if (!item.descripcionBase) {
       item.descripcionBase = item.modelos[0] ? item.modelos[0].descripcion : (item.descripcion || '');
       migroCatalogo = true;
+    }
+    // Compute total from models if models have quantities
+    if (item.modelos && item.modelos.length > 0) {
+      let sum = 0;
+      let tieneCantModelos = false;
+      item.modelos.forEach((m: any) => {
+        if (m.cantidadTotal !== undefined && m.cantidadTotal !== null && m.cantidadTotal !== '') {
+          const num = typeof m.cantidadTotal === 'number' ? m.cantidadTotal : parseInt(String(m.cantidadTotal).replace(/[^0-9-]/g, ''), 10);
+          if (!isNaN(num) && num > 0) {
+            m.cantidadTotal = num;
+            sum += num;
+            tieneCantModelos = true;
+          }
+        }
+      });
+      if (tieneCantModelos && sum > 0) {
+        if (item.cantidadTotal !== sum) {
+          item.cantidadTotal = sum;
+          migroCatalogo = true;
+        }
+      }
+    }
+    if (item.cantidadTotal !== undefined && item.cantidadTotal !== null && typeof item.cantidadTotal === 'string') {
+      const num = parseInt(item.cantidadTotal.replace(/[^0-9-]/g, ''), 10);
+      if (!isNaN(num)) {
+        item.cantidadTotal = num;
+        migroCatalogo = true;
+      }
     }
   });
   if (migroCatalogo) {

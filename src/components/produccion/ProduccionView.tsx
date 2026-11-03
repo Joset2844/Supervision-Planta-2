@@ -957,13 +957,25 @@ export const ProduccionView: React.FC = () => {
                           {t.motivoParada && !MOTIVOS_PARADA.includes(t.motivoParada) && (
                             <input
                               type="text"
-                              value={t.motivoParada.replace(/^Otros:?\s*/i, '')}
+                              value={
+                                t.motivoParada === 'Otros' || t.motivoParada === 'otros'
+                                  ? ''
+                                  : t.motivoParada.replace(/^Otros:\s?/i, '')
+                              }
                               onChange={(e) => {
-                                const x = e.target.value.trim();
-                                updateTurnoMaquina(m.id, inst, { motivoParada: x ? 'Otros: ' + x : 'Otros' });
+                                const val = e.target.value;
+                                updateTurnoMaquina(m.id, inst, {
+                                  motivoParada: val.length > 0 ? `Otros: ${val}` : 'Otros',
+                                });
+                              }}
+                              onBlur={(e) => {
+                                const trimmed = e.target.value.trim();
+                                updateTurnoMaquina(m.id, inst, {
+                                  motivoParada: trimmed ? `Otros: ${trimmed}` : 'Otros',
+                                });
                               }}
                               placeholder="Especifica el motivo de la parada"
-                              className="w-full py-1.5 px-2.5 rounded-lg border border-[#4A5568] text-sm outline-none bg-[#232A38] text-white"
+                              className="w-full py-1.5 px-2.5 rounded-lg border border-[#4A5568] text-sm outline-none bg-[#232A38] text-white focus:border-[#F2A93B]"
                             />
                           )}
 

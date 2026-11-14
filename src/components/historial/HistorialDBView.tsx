@@ -34,7 +34,7 @@ import {
   exportarMigracion,
   buscarEnCatalogo,
   resolverModelo,
-  escapeHtml,
+  imprimirTurnoFormatoExcel,
 } from '../../services/excel';
 import { exportarPdfEficienciaVasosDesdeFilas } from '../../services/pdfEficiencia';
 import { TurnoDBRow, FilaTurnoExcel } from '../../types';
@@ -344,55 +344,18 @@ export const HistorialDBView: React.FC = () => {
     }
   };
 
-  // Printable report for a past shift
+  // Printable report for a past shift matching the Turno Excel format (Horizontal A4)
   const handleImprimirHistorial = (rec: TurnoDBRow) => {
     const filas = rec.filas || [];
     if (!filas.length) {
       showToast('error', 'Este turno no tiene filas');
       return;
     }
-    const totalGen = filas.reduce((s, f) => s + (f.total || 0), 0);
-    const mermaGen = filas.reduce((s, f) => s + (f.merma || 0), 0);
-
-    const html =
-      `<!DOCTYPE html><html lang='es'><head><meta charset='UTF-8'><title>Turno ${fechaCorta(
-        rec.fecha
-      )}</title><style>` +
-      `@page{size:A4;margin:12mm;}body{font-family:Arial,Helvetica,sans-serif;color:#111;font-size:11px;}` +
-      `h1{font-size:16px;margin:0 0 2px;}h2{font-size:13px;background:#eee;padding:4px 6px;margin:14px 0 4px;border-left:4px solid #333;}` +
-      `table{width:100%;border-collapse:collapse;margin-bottom:4px;}th,td{border:1px solid #999;padding:3px 5px;text-align:left;}` +
-      `th{background:#f2f2f2;}.num{text-align:right;}.total td{font-weight:700;background:#f7f7f7;}` +
-      `.resumen{display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #333;padding-bottom:6px;margin-bottom:6px;}` +
-      `</style></head><body>` +
-      `<div class='resumen'><div><h1>Producción por Máquina</h1><div>${fechaCorta(rec.fecha)} · ${
-        rec.tipo === 'noche' ? 'Turno Noche' : 'Turno Día'
-      }</div></div>` +
-      `<div><strong>${totalGen} u</strong> total${mermaGen ? ' · ' + mermaGen + ' u merma' : ''}</div></div>` +
-      `<table><thead><tr><th>Máquina</th><th>OP</th><th>Producto</th><th class='num'>Total</th><th class='num'>Merma</th><th>Observaciones</th></tr></thead><tbody>` +
-      filas
-        .map(
-          (f) =>
-            `<tr><td>${escapeHtml(f.maquina || '')}</td><td>${escapeHtml(f.op || '—')}</td><td>${escapeHtml(
-              f.producto || '—'
-            )}</td><td class='num'>${f.total || 0}</td><td class='num'>${f.merma || 0}</td><td>${escapeHtml(
-              f.observaciones || ''
-            )}</td></tr>`
-        )
-        .join('') +
-      `<tr class='total'><td colspan='3'>Total</td><td class='num'>${totalGen}</td><td class='num'>${mermaGen}</td><td></td></tr></tbody></table></body></html>`;
-
-    const w = window.open('', '_blank');
-    if (!w) {
-      alert('El navegador bloqueó la ventana de impresión');
-      return;
-    }
-    w.document.open();
-    w.document.write(html);
-    w.document.close();
-    w.onload = function () {
-      w.focus();
-      w.print();
-    };
+    const tipoLabel = rec.tipo === 'noche' ? 'NOCHE' : 'DÍA';
+    const titulo = `PRODUCCIÓN TURNO ${tipoLabel} ${fechaCorta(rec.fecha)}`;
+    const autor = rec.created_by_email ? rec.created_by_email.split('@')[0] : 'Registro guardado';
+    const subtitulo = `${fechaCorta(rec.fecha)} · Turno ${rec.tipo === 'noche' ? 'Noche' : 'Día'} · Guardado por: ${autor}`;
+    imprimirTurnoFormatoExcel(filas, titulo, subtitulo, maquinas);
   };
 
   const handleDescargarPdfEficiencia = (rec: TurnoDBRow) => {

@@ -334,6 +334,7 @@ export const ProduccionView: React.FC = () => {
     const tipo = metaTurno.tipo ? etiquetaTurno(metaTurno.tipo) : '';
     const nombre = `activacion_${metaTurno.fecha || 'sin-fecha'}_${metaTurno.tipo || 'sin-turno'}`;
     imprimirActivacion(filas, fecha, tipo, nombre);
+    showToast('ok', `PDF de activación descargado (Horizontal A4): ${nombre}.pdf`);
   };
 
   const handleCopiarReporteWsp = async () => {

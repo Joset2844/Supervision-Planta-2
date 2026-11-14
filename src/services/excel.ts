@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
+import { jsPDF } from 'jspdf';
 import { CatalogoItem, CatalogoModelo, FilaTurnoExcel, ListaItem, Maquina, TurnoMaquina } from '../types';
 
 export const AREAS_ORDEN = [
@@ -769,6 +770,312 @@ export async function exportarTurnoExcel(filas: FilaTurnoExcel[], titulo: string
   }
 }
 
+export function imprimirTurnoFormatoExcel(
+  filasOriginales: FilaTurnoExcel[],
+  titulo: string,
+  subtitulo: string,
+  maquinasCatalogo: Maquina[] = []
+) {
+  // Enrich rows that might miss area/codigoMaquina in legacy saved shifts
+  const maqMap = new Map<string, Maquina>();
+  maquinasCatalogo.forEach((m) => {
+    maqMap.set(m.nombre.trim().toLowerCase(), m);
+  });
+
+  const filas = (filasOriginales || []).map((f) => {
+    const match = maqMap.get((f.maquina || '').trim().toLowerCase());
+    return {
+      ...f,
+      area: f.area || match?.area || '',
+      codigoMaquina: f.codigoMaquina || match?.codigo || '',
+    };
+  });
+
+  const totalGen = filas.reduce((s, f) => s + (f.total || 0), 0);
+  const mermaGen = filas.reduce((s, f) => s + (f.merma || 0), 0);
+
+  const bloquesAreas = AREAS_ORDEN.map((areaDef) => {
+    const filasDeArea = filas.filter((f) => (f.area || '') === areaDef.key);
+    if (filasDeArea.length === 0) return '';
+
+    let totalArea = 0;
+    let mermaArea = 0;
+    filasDeArea.forEach((f) => {
+      totalArea += f.total || 0;
+      mermaArea += f.merma || 0;
+    });
+
+    // Build rows with vertical rowspan merging for consecutive identical machine names (matching Excel export)
+    let tbodyHtml = '';
+    let i = 0;
+    while (i < filasDeArea.length) {
+      let j = i;
+      const maqKey = (filasDeArea[i].maquina || '').trim().toLowerCase();
+      while (
+        j + 1 < filasDeArea.length &&
+        (filasDeArea[j + 1].maquina || '').trim().toLowerCase() === maqKey
+      ) {
+        j++;
+      }
+      const span = j - i + 1;
+      const rs = span > 1 ? ` rowspan="${span}"` : '';
+
+      for (let k = i; k <= j; k++) {
+        const f = filasDeArea[k];
+        tbodyHtml += '<tr>';
+        if (k === i) {
+          tbodyHtml += `<td${rs} class="maq-cell">${escapeHtml(f.maquina || '')}</td>`;
+          tbodyHtml += `<td${rs} class="cod-cell">${escapeHtml(f.codigoMaquina || '')}</td>`;
+        }
+        tbodyHtml += `<td class="op-cell">${escapeHtml(f.op || '')}</td>`;
+        tbodyHtml += `<td class="sap-cell">${escapeHtml(f.sap || '')}</td>`;
+        tbodyHtml += `<td class="prod-cell">${escapeHtml(f.producto || '')}</td>`;
+        tbodyHtml += `<td class="num">${(f.total || 0).toLocaleString('es-PE')}</td>`;
+        tbodyHtml += `<td class="num merma">${(f.merma || 0).toLocaleString('es-PE')}</td>`;
+        tbodyHtml += `<td class="obs-cell">${escapeHtml(f.observaciones || '')}</td>`;
+        tbodyHtml += '</tr>';
+      }
+      i = j + 1;
+    }
+
+    return `
+      <div class="area-block">
+        <div class="area-banner">${escapeHtml(areaDef.label)}</div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width:13%">MÁQUINA</th>
+              <th style="width:9%">CÓDIGO MÁQ.</th>
+              <th style="width:9%">OP'S</th>
+              <th style="width:9%">SAP</th>
+              <th style="width:24%">PRODUCTO</th>
+              <th style="width:11%">TOTAL PROD.</th>
+              <th style="width:8%">MERMA</th>
+              <th style="width:17%">OBSERVACIONES</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tbodyHtml}
+            <tr class="total-row">
+              <td colspan="5">TOTAL ${escapeHtml(areaDef.label)}</td>
+              <td class="num">${totalArea.toLocaleString('es-PE')}</td>
+              <td class="num merma">${mermaArea.toLocaleString('es-PE')}</td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    `;
+  })
+    .filter(Boolean)
+    .join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>${escapeHtml(titulo)}</title>
+  <style>
+    @page {
+      size: A4 landscape;
+      margin: 8mm;
+    }
+    * {
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      color: #111827;
+      font-size: 10px;
+      background: #ffffff;
+    }
+    .title-banner {
+      background: #12161F;
+      color: #FFFFFF;
+      padding: 8px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 3px solid #F2A93B;
+      margin-bottom: 8px;
+    }
+    .title-main {
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+    }
+    .title-sub {
+      font-size: 10px;
+      color: #CBD5E0;
+      margin-top: 2px;
+    }
+    .title-stats {
+      text-align: right;
+      font-size: 10.5px;
+      white-space: nowrap;
+    }
+    .title-stats strong {
+      color: #F2A93B;
+      font-size: 12px;
+    }
+    .title-stats .merma-badge {
+      color: #FC8181;
+      font-weight: 700;
+      margin-left: 8px;
+    }
+    .area-block {
+      margin-bottom: 10px;
+      page-break-inside: auto;
+    }
+    .area-banner {
+      background: #D97706;
+      color: #FFFFFF;
+      font-weight: 700;
+      font-size: 11px;
+      padding: 4px 8px;
+      letter-spacing: 0.4px;
+      border: 1px solid #B7B7B7;
+      border-bottom: none;
+      page-break-after: avoid;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    thead {
+      display: table-header-group;
+    }
+    tr {
+      page-break-inside: avoid;
+    }
+    th, td {
+      border: 1px solid #B7B7B7;
+      padding: 3.5px 5px;
+      vertical-align: middle;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+    th {
+      background: #F2F2F2;
+      color: #333333;
+      font-weight: 700;
+      font-size: 9px;
+      text-align: center;
+    }
+    .maq-cell {
+      font-weight: 700;
+      background: #FAFAFA;
+    }
+    .cod-cell, .op-cell, .sap-cell {
+      font-family: 'Courier New', Courier, monospace;
+      text-align: center;
+      font-size: 9.5px;
+    }
+    .prod-cell, .obs-cell {
+      text-align: left;
+    }
+    .num {
+      text-align: right;
+      font-family: 'Courier New', Courier, monospace;
+      font-weight: 600;
+    }
+    .merma {
+      color: #C0392B;
+    }
+    .total-row td {
+      background: #FDEBD0;
+      font-weight: 700;
+      font-size: 10px;
+    }
+    .grand-total {
+      margin-top: 6px;
+      background: #12161F;
+      color: #FFFFFF;
+      padding: 6px 10px;
+      display: flex;
+      justify-content: space-between;
+      font-size: 10.5px;
+      font-weight: 700;
+      border-radius: 2px;
+    }
+    .grand-total span.val {
+      color: #F2A93B;
+      font-family: 'Courier New', Courier, monospace;
+    }
+    .grand-total span.merma-val {
+      color: #FC8181;
+      font-family: 'Courier New', Courier, monospace;
+      margin-left: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="title-banner">
+    <div>
+      <div class="title-main">${escapeHtml(titulo)}</div>
+      <div class="title-sub">${escapeHtml(subtitulo)}</div>
+    </div>
+    <div class="title-stats">
+      Total: <strong>${totalGen.toLocaleString('es-PE')} u</strong>
+      ${mermaGen > 0 ? `<span class="merma-badge">Merma: ${mermaGen.toLocaleString('es-PE')} u</span>` : ''}
+      <span style="color:#A0AEC0;margin-left:8px;">(${filas.length} filas)</span>
+    </div>
+  </div>
+  ${bloquesAreas}
+  <div class="grand-total">
+    <span>RESUMEN GENERAL DEL TURNO (${filas.length} REGISTROS)</span>
+    <div>
+      TOTAL PRODUCIDO: <span class="val">${totalGen.toLocaleString('es-PE')} u</span>
+      <span class="merma-val">MERMA TOTAL: ${mermaGen.toLocaleString('es-PE')} u</span>
+    </div>
+  </div>
+</body>
+</html>`;
+
+  // Print via hidden iframe to avoid popup blockers while preserving exact A4 landscape @page layout
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  iframe.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentWindow?.document;
+  if (!doc || !iframe.contentWindow) {
+    document.body.removeChild(iframe);
+    return;
+  }
+
+  doc.open();
+  doc.write(html);
+  doc.close();
+
+  const cleanup = () => {
+    if (iframe.parentNode) {
+      iframe.parentNode.removeChild(iframe);
+    }
+  };
+
+  iframe.contentWindow.addEventListener('afterprint', cleanup, { once: true });
+  setTimeout(() => {
+    try {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    } finally {
+      setTimeout(cleanup, 60000);
+    }
+  }, 200);
+}
+
 // ----------------- ACTIVACION EXCEL & PDF -----------------
 export function filasActivacion(maquinas: Maquina[], turno: TurnoMaquina[], catalogo: CatalogoItem[]): any[] {
   const filas: any[] = [];
@@ -917,54 +1224,257 @@ export async function exportarActivacionExcel(filas: any[], titulo: string, nomb
 }
 
 export function imprimirActivacion(filas: any[], fechaTxt: string, turnoTxt: string, nombreArchivo: string) {
-  function bloque(areaDef: { key: string; label: string }) {
-    const de = filas.filter((f) => (f.area || '') === areaDef.key);
-    if (de.length === 0) return '';
-    let h = `<h2>${areaDef.label}</h2><table><thead><tr>` + ACT_HEADERS.map((x) => `<th>${x}</th>`).join('') + `</tr></thead><tbody>`;
-    let i = 0;
-    while (i < de.length) {
-      let j = i;
-      while (j + 1 < de.length && de[j + 1].maqId === de[i].maqId) j++;
-      const n = j - i + 1;
-      const f0 = de[i];
-      const rs = n > 1 ? ` rowspan='${n}'` : '';
-      for (let k = i; k <= j; k++) {
-        const f = de[k];
-        h += `<tr class='${f.parada ? 'parada' : ''}'>`;
-        if (k === i) h += `<td${rs}><b>${escapeHtml(f0.maquina)}</b></td><td${rs}>${escapeHtml(f0.codigo)}</td>`;
-        h += `<td><b>${f.parada ? 'PARADA' : 'ACTIVA'}</b></td><td>${escapeHtml(f.motivo)}</td><td>${escapeHtml(f.op || '—')}</td><td>${escapeHtml(
-          f.producto
-        )}</td><td>${escapeHtml(f.personal)}</td><td>${escapeHtml(f.observaciones)}</td></tr>`;
-      }
-      i = j + 1;
-    }
-    return h + `</tbody></table>`;
-  }
-
   const cntAct = contarMaquinasAct(filas);
-  const html =
-    `<!DOCTYPE html><html lang='es'><head><meta charset='UTF-8'><title>${nombreArchivo}</title><style>` +
-    `@page{size:A4 landscape;margin:10mm;}body{font-family:Arial,Helvetica,sans-serif;color:#111;font-size:11px;-webkit-print-color-adjust:exact;print-color-adjust:exact;}` +
-    `h1{font-size:16px;margin:0 0 2px;}h2{font-size:13px;background:#d97706;color:#fff;padding:4px 6px;margin:12px 0 4px;}` +
-    `table{width:100%;border-collapse:collapse;margin-bottom:4px;}th,td{border:1px solid #999;padding:3px 5px;text-align:left;vertical-align:middle;}` +
-    `th{background:#f2f2f2;text-align:center;}tr.parada td{background:#fff176;}` +
-    `.top{display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #333;padding-bottom:6px;margin-bottom:4px;}` +
-    `</style></head><body><div class='top'><div><h1>Activación de máquinas</h1><div>${fechaTxt}${
-      turnoTxt ? ' · ' + turnoTxt : ''
-    }</div></div><div><b>${cntAct.total}</b> máquina(s) · <b>${cntAct.paradas}</b> parada(s)</div></div>${AREAS_ORDEN.map(bloque).join('')}</body></html>`;
 
-  const w = window.open('', '_blank');
-  if (!w) {
-    alert('El navegador bloqueó la ventana de impresión');
-    return;
-  }
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
-  w.onload = function () {
-    w.focus();
-    w.print();
+  const doc = new jsPDF({
+    orientation: 'landscape',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const pageWidth = 297;
+  const pageHeight = 210;
+  const marginX = 12;
+  const contentWidth = pageWidth - marginX * 2; // 273 mm
+
+  // Column widths summing strictly to 273 mm
+  const colWidths = [32, 21, 18, 35, 20, 63, 40, 44];
+  const colX: number[] = [];
+  let accX = marginX;
+  colWidths.forEach((w) => {
+    colX.push(accX);
+    accX += w;
+  });
+
+  let y = 12;
+
+  const drawMainHeader = () => {
+    doc.setFillColor(18, 22, 31); // #12161F
+    doc.rect(marginX, y, contentWidth, 16, 'F');
+    doc.setFillColor(242, 169, 59); // #F2A93B gold accent
+    doc.rect(marginX, y, 3.5, 16, 'F');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13.5);
+    doc.setTextColor(255, 255, 255);
+    doc.text('ACTIVACIÓN DE MÁQUINAS', marginX + 7, y + 6.8);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.5);
+    doc.setTextColor(203, 213, 224);
+    const sub = `${fechaTxt}${turnoTxt ? '  ·  ' + turnoTxt : ''}`;
+    doc.text(sub, marginX + 7, y + 12.5);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(242, 169, 59);
+    doc.text(
+      `${cntAct.total} máquina(s)  ·  ${cntAct.paradas} parada(s)`,
+      marginX + contentWidth - 4,
+      y + 9.5,
+      { align: 'right' }
+    );
+
+    y += 19;
   };
+
+  const drawAreaAndTableHeaders = (areaLabel: string, isContinuation = false) => {
+    // Area header banner (#D97706)
+    doc.setFillColor(217, 119, 6);
+    doc.setDrawColor(183, 183, 183);
+    doc.setLineWidth(0.2);
+    doc.rect(marginX, y, contentWidth, 6.5, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(255, 255, 255);
+    doc.text(
+      isContinuation ? `${areaLabel} (CONTINUACIÓN)` : areaLabel,
+      marginX + 3,
+      y + 4.4
+    );
+    y += 6.5;
+
+    // Column headers (#F2F2F2)
+    doc.setFillColor(242, 242, 242);
+    doc.rect(marginX, y, contentWidth, 6.2, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.2);
+    doc.setTextColor(51, 51, 51);
+    ACT_HEADERS.forEach((h, i) => {
+      doc.line(colX[i], y, colX[i], y + 6.2);
+      doc.text(h, colX[i] + colWidths[i] / 2, y + 4.2, { align: 'center' });
+    });
+    doc.line(marginX + contentWidth, y, marginX + contentWidth, y + 6.2);
+    y += 6.2;
+  };
+
+  drawMainHeader();
+
+  AREAS_ORDEN.forEach((areaDef) => {
+    const de = filas.filter((f) => (f.area || '') === areaDef.key);
+    if (de.length === 0) return;
+
+    // Ensure enough room for area header + table header + at least 1 row
+    if (y + 22 > pageHeight - 14) {
+      doc.addPage('a4', 'landscape');
+      y = 12;
+      drawMainHeader();
+    }
+
+    drawAreaAndTableHeaders(areaDef.label, false);
+
+    let prevMaqKey: string | null = null;
+
+    de.forEach((f, idx) => {
+      const maqKey = String(f.maqId || f.maquina || '');
+      const isSameAsPrev = prevMaqKey !== null && prevMaqKey === maqKey;
+      const nextIsSame = idx + 1 < de.length && String(de[idx + 1].maqId || de[idx + 1].maquina || '') === maqKey;
+
+      const values = [
+        isSameAsPrev ? '' : String(f.maquina || ''),
+        isSameAsPrev ? '' : String(f.codigo || ''),
+        f.parada ? 'PARADA' : 'ACTIVA',
+        String(f.motivo || ''),
+        String(f.op || '—'),
+        String(f.producto || ''),
+        String(f.personal || ''),
+        String(f.observaciones || ''),
+      ];
+
+      doc.setFontSize(7.2);
+      const wrappedLines = values.map((val, cIdx) => {
+        if (!val) return [''];
+        return doc.splitTextToSize(val, colWidths[cIdx] - 2.6) as string[];
+      });
+
+      const maxLines = Math.max(...wrappedLines.map((l) => l.length), 1);
+      const rowH = Math.max(5.8, maxLines * 3.3 + 2.4);
+
+      if (y + rowH > pageHeight - 14) {
+        doc.addPage('a4', 'landscape');
+        y = 12;
+        drawAreaAndTableHeaders(areaDef.label, true);
+        // After page break, reprint machine name/code for clarity
+        wrappedLines[0] = f.maquina ? (doc.splitTextToSize(String(f.maquina), colWidths[0] - 2.6) as string[]) : [''];
+        wrappedLines[1] = f.codigo ? (doc.splitTextToSize(String(f.codigo), colWidths[1] - 2.6) as string[]) : [''];
+      }
+
+      // Row background
+      if (f.parada) {
+        doc.setFillColor(255, 241, 118); // #FFF176 yellow highlight
+        doc.rect(marginX, y, contentWidth, rowH, 'F');
+      } else if (idx % 2 === 1) {
+        doc.setFillColor(250, 250, 250);
+        doc.rect(marginX, y, contentWidth, rowH, 'F');
+      }
+
+      // Draw borders cleanly (omit top line in cols 0 & 1 when merged with previous row on same page)
+      doc.setDrawColor(183, 183, 183);
+      doc.setLineWidth(0.2);
+
+      // Vertical borders
+      colX.forEach((cx) => {
+        doc.line(cx, y, cx, y + rowH);
+      });
+      doc.line(marginX + contentWidth, y, marginX + contentWidth, y + rowH);
+
+      // Bottom border (for cols 0..1 omit if next row on same machine, else draw full)
+      if (!nextIsSame) {
+        doc.line(marginX, y + rowH, marginX + contentWidth, y + rowH);
+      } else {
+        doc.line(colX[2], y + rowH, marginX + contentWidth, y + rowH);
+      }
+
+      // Cell text
+      wrappedLines.forEach((lines, cIdx) => {
+        if (lines.length === 1 && lines[0] === '') return;
+
+        if (cIdx === 0 || cIdx === 2) {
+          doc.setFont('helvetica', 'bold');
+        } else {
+          doc.setFont('helvetica', 'normal');
+        }
+
+        if (cIdx === 2 && f.parada) {
+          doc.setTextColor(185, 28, 28); // Red bold for PARADA
+        } else if (cIdx === 2) {
+          doc.setTextColor(21, 128, 61); // Green bold for ACTIVA
+        } else {
+          doc.setTextColor(17, 24, 39);
+        }
+
+        const totalTextH = lines.length * 3.3;
+        let startTextY = y + (rowH - totalTextH) / 2 + 2.6;
+
+        lines.forEach((line) => {
+          if (cIdx === 1 || cIdx === 2 || cIdx === 4) {
+            doc.text(line, colX[cIdx] + colWidths[cIdx] / 2, startTextY, { align: 'center' });
+          } else {
+            doc.text(line, colX[cIdx] + 1.4, startTextY);
+          }
+          startTextY += 3.3;
+        });
+      });
+
+      prevMaqKey = maqKey;
+      y += rowH;
+    });
+
+    y += 4;
+  });
+
+  // Totals footer bar (#FDEBD0)
+  if (y + 9 > pageHeight - 14) {
+    doc.addPage('a4', 'landscape');
+    y = 14;
+  }
+
+  doc.setFillColor(253, 235, 208);
+  doc.setDrawColor(183, 183, 183);
+  doc.setLineWidth(0.25);
+  doc.rect(marginX, y, contentWidth, 7, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(17, 24, 39);
+  doc.text(
+    `TOTAL: ${cntAct.total} máquina(s)  ·  ${cntAct.paradas} parada(s)`,
+    marginX + 3,
+    y + 4.7
+  );
+
+  // Page footer on all pages
+  const totalPages = (doc as any).internal.getNumberOfPages();
+  const generado = new Date().toLocaleString('es-PE', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+  for (let p = 1; p <= totalPages; p++) {
+    doc.setPage(p);
+    doc.setDrawColor(203, 213, 224);
+    doc.setLineWidth(0.2);
+    doc.line(marginX, pageHeight - 10, marginX + contentWidth, pageHeight - 10);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(100, 116, 139);
+    doc.text(
+      `Generado: ${generado}  ·  Activación de Máquinas (Horizontal A4)`,
+      marginX,
+      pageHeight - 6.2
+    );
+    doc.text(`Página ${p} de ${totalPages}`, marginX + contentWidth, pageHeight - 6.2, {
+      align: 'right',
+    });
+  }
+
+  doc.save(`${nombreArchivo}.pdf`);
 }
 
 // ----------------- MIGRACION EXCEL -----------------

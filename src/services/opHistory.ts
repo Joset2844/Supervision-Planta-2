@@ -391,3 +391,175 @@ export async function consultarHistorialOp(params: {
     nubeMensaje,
   };
 }
+
+export interface MaquinaTurnoFila {
+  op: string;
+  sap: string;
+  producto: string;
+  total: number;
+  merma: number;
+  observaciones: string;
+}
+
+export interface TurnoMaquinaResumen {
+  key: string;
+  fecha: string;
+  tipo: string;
+  fuente: 'nube' | 'local';
+  totalProducido: number;
+  totalMerma: number;
+  filas: MaquinaTurnoFila[];
+}
+
+export interface ConsultaMaquinaResultado {
+  turnosAnteriores: TurnoMaquinaResumen[];
+  totalProducido: number;
+  totalMerma: number;
+  promedioPorTurno: number;
+  nubeDisponible: boolean;
+  nubeMensaje: string;
+}
+
+function maquinaCoincide(
+  fila: { maquina?: string; codigoMaquina?: string },
+  maquina: Maquina
+): boolean {
+  const fNombre = (fila.maquina || '').trim().toLowerCase();
+  const mNombre = (maquina.nombre || '').trim().toLowerCase();
+  if (fNombre && mNombre && fNombre === mNombre) return true;
+
+  const fCod = (fila.codigoMaquina || '').trim().toLowerCase();
+  const mCod = (maquina.codigo || '').trim().toLowerCase();
+  if (fCod && mCod && fCod === mCod) return true;
+
+  return false;
+}
+
+export async function consultarHistorialMaquina(params: {
+  maquina: Maquina;
+  historial: HistorialTurnoLocal[];
+  metaTurno: MetaTurno;
+  session: SupabaseSession | null;
+}): Promise<ConsultaMaquinaResultado> {
+  const { maquina, historial, metaTurno, session } = params;
+
+  let dbRows: TurnoDBRow[] = [];
+  let nubeDisponible = false;
+  let nubeMensaje = '';
+
+  const cfg = getSupabaseConfig(false);
+  if (cfg) {
+    try {
+      const res = await sbFetch<TurnoDBRow[]>(
+        cfg,
+        'turnos?select=fecha,tipo,filas&order=fecha.desc,tipo.asc&limit=500',
+        undefined,
+        session
+      );
+      if (Array.isArray(res)) {
+        dbRows = res;
+        nubeDisponible = true;
+      }
+    } catch {
+      nubeDisponible = false;
+      nubeMensaje = session
+        ? 'No se pudo consultar la base de datos en la nube. Mostrando registros locales.'
+        : 'Inicia sesión en la pestaña Historial para consultar también los turnos guardados en la nube.';
+    }
+  } else {
+    nubeMensaje = 'Mostrando solo registros guardados en este dispositivo.';
+  }
+
+  const mapaTurnos = new Map<string, TurnoMaquinaResumen>();
+  const currentFecha = (metaTurno.fecha || '').trim();
+  const currentTipo = (metaTurno.tipo || '').trim().toLowerCase();
+
+  // 1. Procesar turnos desde Supabase
+  dbRows.forEach((rec) => {
+    const fFecha = (rec.fecha || '').trim();
+    const fTipo = (rec.tipo || '').trim().toLowerCase();
+    if (currentFecha && currentTipo && fFecha === currentFecha && fTipo === currentTipo) {
+      return;
+    }
+
+    const coincidentes = (rec.filas || []).filter((f) => maquinaCoincide(f, maquina));
+    if (coincidentes.length === 0) return;
+
+    const filasMap: MaquinaTurnoFila[] = coincidentes.map((f) => ({
+      op: f.op || '',
+      sap: f.sap || '',
+      producto: f.producto || '',
+      total: Number(f.total) || 0,
+      merma: Number(f.merma) || 0,
+      observaciones: f.observaciones || '',
+    }));
+
+    const key = `${fFecha}|${fTipo}`;
+    mapaTurnos.set(key, {
+      key,
+      fecha: fFecha,
+      tipo: fTipo,
+      fuente: 'nube',
+      totalProducido: filasMap.reduce((s, r) => s + r.total, 0),
+      totalMerma: filasMap.reduce((s, r) => s + r.merma, 0),
+      filas: filasMap,
+    });
+  });
+
+  // 2. Complementar con historial local
+  (historial || []).forEach((h) => {
+    const fFecha = (h.fechaTurno || (h.fecha ? h.fecha.slice(0, 10) : '')).trim();
+    const fTipo = (h.tipoTurno || '').trim().toLowerCase();
+    if (!fFecha) return;
+    if (currentFecha && currentTipo && fFecha === currentFecha && fTipo === currentTipo) {
+      return;
+    }
+
+    const key = `${fFecha}|${fTipo}`;
+    if (mapaTurnos.has(key)) return;
+
+    const coincidentes = (h.filas || []).filter((f) => maquinaCoincide(f, maquina));
+    if (coincidentes.length === 0) return;
+
+    const filasMap: MaquinaTurnoFila[] = coincidentes.map((f) => ({
+      op: f.op || '',
+      sap: f.sap || '',
+      producto: f.producto || '',
+      total: Number(f.total) || 0,
+      merma: Number(f.merma) || 0,
+      observaciones: f.observaciones || '',
+    }));
+
+    mapaTurnos.set(key, {
+      key,
+      fecha: fFecha,
+      tipo: fTipo,
+      fuente: 'local',
+      totalProducido: filasMap.reduce((s, r) => s + r.total, 0),
+      totalMerma: filasMap.reduce((s, r) => s + r.merma, 0),
+      filas: filasMap,
+    });
+  });
+
+  const turnosAnteriores = Array.from(mapaTurnos.values()).sort((a, b) => {
+    const cmpFecha = b.fecha.localeCompare(a.fecha);
+    if (cmpFecha !== 0) return cmpFecha;
+    const pesoTipo = (t: string) => (t === 'noche' ? 2 : t === 'dia' ? 1 : 0);
+    return pesoTipo(b.tipo) - pesoTipo(a.tipo);
+  });
+
+  const totalProducido = turnosAnteriores.reduce((s, t) => s + t.totalProducido, 0);
+  const totalMerma = turnosAnteriores.reduce((s, t) => s + t.totalMerma, 0);
+  const promedioPorTurno =
+    turnosAnteriores.length > 0 ? Math.round(totalProducido / turnosAnteriores.length) : 0;
+
+  return {
+    turnosAnteriores,
+    totalProducido,
+    totalMerma,
+    promedioPorTurno,
+    nubeDisponible,
+    nubeMensaje,
+  };
+}
+

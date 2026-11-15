@@ -46,6 +46,7 @@ import {
 import { getSupabaseConfig, sbLogin } from '../../services/supabase';
 import { Maquina, TurnoMaquina, RegistroTurno } from '../../types';
 import { HistorialOpModal } from './HistorialOpModal';
+import { HistorialMaquinaModal } from './HistorialMaquinaModal';
 
 const MOTIVOS_PARADA = ['Mantenimiento', 'Falta de personal', 'Desglose', 'Calibración'];
 
@@ -77,6 +78,7 @@ export const ProduccionView: React.FC = () => {
   const [textoRestaurar, setTextoRestaurar] = useState('');
   const [reportesAbiertosMobile, setReportesAbiertosMobile] = useState(false);
   const [opHistorialAbierta, setOpHistorialAbierta] = useState<string | null>(null);
+  const [maquinaHistorialAbierta, setMaquinaHistorialAbierta] = useState<Maquina | null>(null);
 
   // DB save & auth states
   const [guardandoDB, setGuardandoDB] = useState(false);
@@ -852,6 +854,18 @@ export const ProduccionView: React.FC = () => {
                             <span className="font-['IBM_Plex_Mono',monospace] font-bold text-sm sm:text-base text-white truncate">
                               {cardNombre}
                             </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setMaquinaHistorialAbierta(m);
+                              }}
+                              className="inline-flex items-center gap-1 py-0.5 px-1.5 rounded-md bg-[#232A38] hover:bg-[#2D3748] border border-[#63B3ED]/40 text-[#93C5FD] text-[10px] font-semibold cursor-pointer transition-colors shrink-0"
+                              title={`Ver historial de ${m.nombre} en turnos anteriores`}
+                            >
+                              <History size={11} />
+                              <span>Historial</span>
+                            </button>
                             {m.codigo && (
                               <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-[#232A38] border border-[#4A5568] text-[#CBD5E0] font-['IBM_Plex_Mono',monospace]">
                                 {m.codigo}
@@ -1587,6 +1601,14 @@ export const ProduccionView: React.FC = () => {
         <HistorialOpModal
           op={opHistorialAbierta}
           onClose={() => setOpHistorialAbierta(null)}
+        />
+      )}
+
+      {/* Modal Historial de Máquina en Turnos Anteriores */}
+      {maquinaHistorialAbierta && (
+        <HistorialMaquinaModal
+          maquina={maquinaHistorialAbierta}
+          onClose={() => setMaquinaHistorialAbierta(null)}
         />
       )}
     </div>

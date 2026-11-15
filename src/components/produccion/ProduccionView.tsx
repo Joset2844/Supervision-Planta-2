@@ -850,20 +850,21 @@ export const ProduccionView: React.FC = () => {
                     : [];
 
                   const currentMatch = buscarEnCatalogo(catalogo, t.op);
-                  const avanceOp = t.op
-                    ? calcularAvanceOpEnTarjeta({
-                        op: t.op,
-                        modeloIdx: t.modeloIdx,
-                        maquina: m,
-                        catalogMatch: currentMatch,
-                        dbRows: turnosNubeSnap.dbRows,
-                        nubeDisponible: turnosNubeSnap.nubeDisponible,
-                        historial,
-                        turno,
-                        metaTurno,
-                        maquinas,
-                      })
-                    : null;
+                  const avanceOp =
+                    t.op && m.tipoProducto !== 'pp'
+                      ? calcularAvanceOpEnTarjeta({
+                          op: t.op,
+                          modeloIdx: t.modeloIdx,
+                          maquina: m,
+                          catalogMatch: currentMatch,
+                          dbRows: turnosNubeSnap.dbRows,
+                          nubeDisponible: turnosNubeSnap.nubeDisponible,
+                          historial,
+                          turno,
+                          metaTurno,
+                          maquinas,
+                        })
+                      : null;
 
                   return (
                     <div

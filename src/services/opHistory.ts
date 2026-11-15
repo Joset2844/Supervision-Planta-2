@@ -807,7 +807,7 @@ export function calcularAvanceOpEnTarjeta(params: {
   } = params;
 
   const opClean = (op || '').trim();
-  if (!opClean || !catalogMatch) return null;
+  if (!opClean || !catalogMatch || maquina.tipoProducto === 'pp') return null;
 
   const mod =
     modeloIdx >= 0 && catalogMatch.modelos && catalogMatch.modelos[modeloIdx]
@@ -820,8 +820,8 @@ export function calcularAvanceOpEnTarjeta(params: {
 
   if (!meta || meta <= 0) return null;
 
-  const alcance: 'pt' | 'pp' | 'sin_tipo' =
-    maquina.tipoProducto === 'pp' ? 'pp' : maquina.tipoProducto === 'pt' ? 'pt' : 'sin_tipo';
+  const alcance: 'pt' | 'sin_tipo' =
+    maquina.tipoProducto === 'pt' ? 'pt' : 'sin_tipo';
 
   const maqTipoMap = buildMaqTipoMap(maquinas);
   const currentFecha = (metaTurno.fecha || '').trim();
@@ -852,15 +852,11 @@ export function calcularAvanceOpEnTarjeta(params: {
     codMaq?: string
   ): boolean => {
     const tipoRes = resolverTipo(maqTipoMap, rawTipo, nombreMaq, codMaq);
-    if (alcance === 'pp') {
-      // PP separado estrictamente por máquina
-      return tipoRes === 'pp' && maquinaCoincide({ maquina: nombreMaq, codigoMaquina: codMaq }, maquina);
-    }
     if (alcance === 'pt') {
       // PT suma únicamente producción terminada (PT)
       return tipoRes === 'pt';
     }
-    // Sin tipo definido en la máquina: suma solo registros de esta misma máquina que no sean PP de otra
+    // Sin tipo definido en la máquina: suma solo registros de esta misma máquina
     return maquinaCoincide({ maquina: nombreMaq, codigoMaquina: codMaq }, maquina);
   };
 
@@ -909,12 +905,7 @@ export function calcularAvanceOpEnTarjeta(params: {
   (turno || []).forEach((t) => {
     const m = maquinas.find((x) => x.id === t.maquinaId);
     if (!m) return;
-    if (alcance === 'pp') {
-      if (m.id !== maquina.id && !maquinaCoincide({ maquina: m.nombre, codigoMaquina: m.codigo }, maquina)) {
-        return;
-      }
-      if (m.tipoProducto !== 'pp') return;
-    } else if (alcance === 'pt') {
+    if (alcance === 'pt') {
       if (m.tipoProducto !== 'pt') return;
     } else {
       if (m.id !== maquina.id && !maquinaCoincide({ maquina: m.nombre, codigoMaquina: m.codigo }, maquina)) {

@@ -22,6 +22,8 @@ import {
   ChevronUp,
   ShieldCheck,
   TrendingUp,
+  ListChecks,
+  CheckSquare,
 } from 'lucide-react';
 import {
   getSupabaseConfig,
@@ -40,6 +42,7 @@ import { exportarPdfEficienciaVasosDesdeFilas } from '../../services/pdfEficienc
 import { TurnoDBRow, FilaTurnoExcel } from '../../types';
 import { HistorialOpTab } from './HistorialOpTab';
 import { HistorialMaquinaTab } from './HistorialMaquinaTab';
+import { AdminGestionMasivaView } from './AdminGestionMasivaView';
 
 export const HistorialDBView: React.FC = () => {
   const { session, setSession, showToast, catalogo, maquinas, subTabHistorial } = useApp();
@@ -112,6 +115,13 @@ export const HistorialDBView: React.FC = () => {
     tipoDestino: string;
     autorEmail: string;
   } | null>(null);
+
+  // Admin bulk audit & shift multi-delete states
+  const [modoGestionMasiva, setModoGestionMasiva] = useState(false);
+  const [modoSeleccionTurnos, setModoSeleccionTurnos] = useState(false);
+  const [turnosSeleccionadosKeys, setTurnosSeleccionadosKeys] = useState<Set<string>>(new Set());
+  const [modalEliminarTurnosMasivo, setModalEliminarTurnosMasivo] = useState<TurnoDBRow[] | null>(null);
+  const [eliminandoTurnosMasivo, setEliminandoTurnosMasivo] = useState(false);
 
   // Admin status: strictly the designated administrator (josetejera44@gmail.com or user/email 'admin')
   const esAdmin = Boolean(
@@ -343,6 +353,51 @@ export const HistorialDBView: React.FC = () => {
       showToast('error', 'No se pudo borrar: ' + (err.message || ''));
     } finally {
       setEliminandoTurno(false);
+    }
+  };
+
+  const toggleTurnoSeleccionado = (key: string) => {
+    setTurnosSeleccionadosKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const turnosSeleccionadosLista = useMemo(() => {
+    return turnos.filter((t) => turnosSeleccionadosKeys.has(`${t.fecha}-${t.tipo}`));
+  }, [turnos, turnosSeleccionadosKeys]);
+
+  const ejecutarEliminarTurnosMasivo = async () => {
+    if (!esAdmin || !modalEliminarTurnosMasivo || modalEliminarTurnosMasivo.length === 0) return;
+    const cfg = getSupabaseConfig(false);
+    if (!cfg) {
+      showToast('error', 'Falta configuración de Supabase');
+      return;
+    }
+
+    setEliminandoTurnosMasivo(true);
+    try {
+      let eliminados = 0;
+      for (const rec of modalEliminarTurnosMasivo) {
+        await sbFetch(
+          cfg,
+          `turnos?fecha=eq.${encodeURIComponent(rec.fecha)}&tipo=eq.${encodeURIComponent(rec.tipo)}`,
+          { method: 'DELETE', prefer: 'return=representation' },
+          session
+        );
+        eliminados++;
+      }
+      showToast('ok', `${eliminados} turno(s) eliminados del historial`);
+      setModalEliminarTurnosMasivo(null);
+      setTurnosSeleccionadosKeys(new Set());
+      setModoSeleccionTurnos(false);
+      await buscarHistorial();
+    } catch (err: any) {
+      showToast('error', 'No se pudo completar la eliminación masiva: ' + (err.message || ''));
+    } finally {
+      setEliminandoTurnosMasivo(false);
     }
   };
 
@@ -719,6 +774,19 @@ export const HistorialDBView: React.FC = () => {
           </p>
         </div>
       </div>
+    );
+  }
+
+  // Admin Bulk Audit & Editing View (cross-shift machine/OP inspection & bulk edit/delete)
+  if (modoGestionMasiva && esAdmin) {
+    return (
+      <AdminGestionMasivaView
+        session={session}
+        maquinas={maquinas}
+        onClose={() => setModoGestionMasiva(false)}
+        onDataChanged={buscarHistorial}
+        showToast={showToast}
+      />
     );
   }
 
@@ -1309,6 +1377,40 @@ export const HistorialDBView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
+                  setModoGestionMasiva(true);
+                  setModoVersiones(false);
+                  setEditorActivo(false);
+                }}
+                className="bg-[#3A2E1B] text-[#F6AD55] border border-[#F2A93B]/60 hover:bg-[#F2A93B]/25 py-2.5 px-3.5 rounded-xl text-xs sm:text-sm font-bold cursor-pointer active:scale-95 min-h-[42px] flex items-center justify-center gap-1.5"
+                title="Auditar, editar o eliminar registros de máquinas/OPs entre múltiples turnos"
+              >
+                <ListChecks size={16} />
+                <span>Revisión / Edición Masiva</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setModoSeleccionTurnos((prev) => {
+                    const next = !prev;
+                    if (!next) setTurnosSeleccionadosKeys(new Set());
+                    return next;
+                  });
+                }}
+                className={`py-2.5 px-3 rounded-xl text-xs sm:text-sm font-semibold cursor-pointer active:scale-95 min-h-[42px] flex items-center justify-center gap-1.5 border ${
+                  modoSeleccionTurnos
+                    ? 'bg-[#E53E3E]/20 text-[#FC8181] border-[#E53E3E]/60'
+                    : 'bg-[#232A38] text-[#CBD5E0] border-[#4A5568] hover:text-white'
+                }`}
+                title="Seleccionar varios turnos completos para eliminarlos en lote"
+              >
+                <CheckSquare size={15} />
+                <span>{modoSeleccionTurnos ? 'Cancelar Selección' : 'Seleccionar Turnos'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
                   setErrorCrearUsuario('');
                   setNuevoUsuarioNombre('');
                   setNuevoUsuarioPass('');
@@ -1338,6 +1440,43 @@ export const HistorialDBView: React.FC = () => {
         </p>
       </div>
 
+      {/* Admin Bulk Shift Selection Bar */}
+      {esAdmin && modoSeleccionTurnos && turnos.length > 0 && (
+        <div className="bg-[#182335] border border-[#E53E3E]/60 rounded-2xl p-3 sm:p-4 flex flex-wrap items-center justify-between gap-2.5 shadow-md">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-['IBM_Plex_Mono',monospace] font-bold text-white bg-[#232A38] px-2.5 py-1 rounded-lg border border-[#4A5568]">
+              {turnosSeleccionadosLista.length} de {turnos.length} turno(s) seleccionado(s)
+            </span>
+            <button
+              type="button"
+              onClick={() => setTurnosSeleccionadosKeys(new Set(turnos.map((t) => `${t.fecha}-${t.tipo}`)))}
+              className="text-xs text-[#F6AD55] hover:underline bg-transparent border-none cursor-pointer font-semibold"
+            >
+              Seleccionar todos
+            </button>
+            {turnosSeleccionadosLista.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setTurnosSeleccionadosKeys(new Set())}
+                className="text-xs text-[#CBD5E0] hover:text-white bg-transparent border-none cursor-pointer underline"
+              >
+                Limpiar
+              </button>
+            )}
+          </div>
+
+          <button
+            type="button"
+            disabled={turnosSeleccionadosLista.length === 0}
+            onClick={() => setModalEliminarTurnosMasivo(turnosSeleccionadosLista)}
+            className="bg-[#E53E3E] hover:bg-[#c53030] text-white py-2 px-4 rounded-xl text-xs font-bold uppercase font-['Oswald',sans-serif] tracking-wider cursor-pointer flex items-center gap-1.5 shadow-md disabled:opacity-40"
+          >
+            <Trash2 size={14} />
+            <span>Eliminar Turnos ({turnosSeleccionadosLista.length})</span>
+          </button>
+        </div>
+      )}
+
       {/* Shifts List: Responsive on mobile & desktop */}
       <div className="space-y-3">
         {cargando ? (
@@ -1365,22 +1504,40 @@ export const HistorialDBView: React.FC = () => {
             const autor = rec.created_by_email ? rec.created_by_email.split('@')[0] : 'desconocido';
             const itemKey = `${rec.fecha}-${rec.tipo}`;
             const estaExpandido = turnoExpandidoKey === itemKey;
+            const estaSeleccionado = esAdmin && modoSeleccionTurnos && turnosSeleccionadosKeys.has(itemKey);
 
             return (
               <div
                 key={itemKey}
                 className={`border rounded-xl transition-all shadow-sm overflow-hidden ${
-                  estaExpandido
+                  estaSeleccionado
+                    ? 'bg-[#2A181D] border-[#E53E3E] ring-1 ring-[#E53E3E]/40'
+                    : estaExpandido
                     ? 'bg-[#182335] border-[#F2A93B]/70 shadow-[#F2A93B]/5 ring-1 ring-[#F2A93B]/20'
                     : 'bg-[#1A202C] border-[#2D3748] hover:border-[#4A5568]'
                 }`}
               >
-                {/* Header row: Clickable to expand/collapse */}
+                {/* Header row: Clickable to expand/collapse (or toggle selection in bulk mode) */}
                 <div
-                  onClick={() => setTurnoExpandidoKey((prev) => (prev === itemKey ? null : itemKey))}
+                  onClick={() => {
+                    if (esAdmin && modoSeleccionTurnos) {
+                      toggleTurnoSeleccionado(itemKey);
+                    } else {
+                      setTurnoExpandidoKey((prev) => (prev === itemKey ? null : itemKey));
+                    }
+                  }}
                   className="p-2.5 sm:p-3 flex items-center justify-between gap-2 cursor-pointer select-none hover:bg-[#232A38]/50 transition-colors"
                 >
                   <div className="flex items-center gap-2 flex-wrap min-w-0">
+                    {esAdmin && modoSeleccionTurnos && (
+                      <input
+                        type="checkbox"
+                        checked={estaSeleccionado}
+                        onChange={() => toggleTurnoSeleccionado(itemKey)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-4 h-4 accent-[#E53E3E] cursor-pointer shrink-0"
+                      />
+                    )}
                     <span className="font-['IBM_Plex_Mono',monospace] font-bold text-white text-xs sm:text-sm">
                       {fechaCorta(rec.fecha)}
                     </span>
@@ -1597,6 +1754,69 @@ export const HistorialDBView: React.FC = () => {
                   <>
                     <Trash2 size={16} />
                     <span>Sí, Eliminar</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Confirmar Eliminación Masiva de Turnos (Admin) */}
+      {modalEliminarTurnosMasivo && esAdmin && (
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-3 sm:p-4 backdrop-blur-xs">
+          <div className="bg-[#1A202C] border border-[#E53E3E]/60 rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-[#E53E3E]">
+              <div className="w-10 h-10 rounded-xl bg-[#E53E3E]/20 flex items-center justify-center shrink-0 border border-[#E53E3E]/30">
+                <Trash2 size={20} />
+              </div>
+              <div>
+                <h3 className="text-white font-['Oswald',sans-serif] text-base sm:text-lg font-bold tracking-wide uppercase m-0">
+                  ¿Eliminar {modalEliminarTurnosMasivo.length} turno(s)?
+                </h3>
+                <p className="text-xs text-[#CBD5E0] m-0">
+                  Se eliminarán los turnos seleccionados de Supabase permanentemente.
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-[#12161F] border border-[#2D3748] rounded-xl p-3 max-h-48 overflow-y-auto space-y-1.5 text-xs">
+              {modalEliminarTurnosMasivo.map((t) => (
+                <div
+                  key={`${t.fecha}-${t.tipo}`}
+                  className="flex items-center justify-between py-1 border-b border-[#2D3748]/60 last:border-b-0"
+                >
+                  <span className="font-['IBM_Plex_Mono',monospace] text-white font-semibold">
+                    {fechaCorta(t.fecha)} · {t.tipo === 'noche' ? 'Noche' : 'Día'}
+                  </span>
+                  <span className="font-['IBM_Plex_Mono',monospace] text-[#F2A93B]">
+                    {totalFilas(t.filas).toLocaleString('es-PE')} u ({t.filas?.length || 0} filas)
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                type="button"
+                disabled={eliminandoTurnosMasivo}
+                onClick={() => setModalEliminarTurnosMasivo(null)}
+                className="flex-1 bg-[#232A38] text-[#CBD5E0] hover:text-white py-2.5 px-4 rounded-xl text-xs sm:text-sm font-semibold border border-[#4A5568] cursor-pointer min-h-[42px]"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={eliminandoTurnosMasivo}
+                onClick={ejecutarEliminarTurnosMasivo}
+                className="flex-1 bg-[#E53E3E] hover:bg-[#c53030] text-white py-2.5 px-4 rounded-xl text-xs sm:text-sm font-bold uppercase font-['Oswald',sans-serif] tracking-wider cursor-pointer shadow-md min-h-[42px] flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {eliminandoTurnosMasivo ? (
+                  <span>Eliminando...</span>
+                ) : (
+                  <>
+                    <Trash2 size={16} />
+                    <span>Sí, Eliminar ({modalEliminarTurnosMasivo.length})</span>
                   </>
                 )}
               </button>

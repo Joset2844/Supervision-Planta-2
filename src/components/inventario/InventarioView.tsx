@@ -1,9 +1,15 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Odometer } from '../common/Odometer';
-import { Plus, RefreshCw, Upload, Check, Copy, Trash2, Search, X, RotateCcw, Download } from 'lucide-react';
+import { Plus, RefreshCw, Upload, Check, Copy, Trash2, Search, X, RotateCcw, Download, Printer } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { procesarWorkbookCatalogo, buscarEnCatalogo, resolverModelo, exportarInventarioExcel } from '../../services/excel';
+import {
+  procesarWorkbookCatalogo,
+  buscarEnCatalogo,
+  resolverModelo,
+  exportarInventarioExcel,
+  imprimirInventarioFormatoExcel,
+} from '../../services/excel';
 import { copiarAlPortapapeles } from '../../services/reports';
 import { CatalogoItem, ListaItem } from '../../types';
 
@@ -99,6 +105,12 @@ export const InventarioView: React.FC = () => {
     const digitsOnly = e.target.value.replace(/\D/g, '');
     setOpInput(digitsOnly);
     setShowSuggestions(true);
+    if (!digitsOnly) {
+      setModeloSeleccionado(-1);
+      setDescInput('');
+      setClienteInput('');
+      return;
+    }
     const m = buscarEnCatalogo(catalogo, digitsOnly);
     if (m) {
       setModeloSeleccionado(-1);
@@ -159,8 +171,8 @@ export const InventarioView: React.FC = () => {
     }
     const u = parseInt(unidadesInput, 10);
     const c = parseInt(cajasInput, 10);
-    if (isNaN(u) || isNaN(c) || u < 0 || c < 0) {
-      showToast('error', 'Valores de cantidad inválidos');
+    if (isNaN(u) || isNaN(c) || u <= 0 || c <= 0) {
+      showToast('error', `Las unidades y la cantidad de ${tipoEmpaque}s deben ser mayores a 0`);
       return;
     }
     const sapActual = matchActual ? resolverModelo(matchActual, modeloSeleccionado).sap : '';
@@ -180,8 +192,29 @@ export const InventarioView: React.FC = () => {
     };
 
     setLista((prev) => [nuevoItem, ...prev]);
-    showToast('ok', 'Agregado a la lista');
+    showToast('ok', 'Línea agregada a la lista');
     limpiarFormulario();
+  };
+
+  const handleExportarExcel = async () => {
+    if (lista.length === 0) {
+      showToast('error', 'No hay líneas en la lista para exportar');
+      return;
+    }
+    try {
+      await exportarInventarioExcel(lista, catalogo);
+      showToast('ok', 'Excel de inventario exportado');
+    } catch {
+      showToast('error', 'No se pudo generar el Excel de inventario');
+    }
+  };
+
+  const handleImprimirInventario = () => {
+    if (lista.length === 0) {
+      showToast('error', 'No hay líneas en la lista para imprimir');
+      return;
+    }
+    imprimirInventarioFormatoExcel(lista, catalogo);
   };
 
   const handleEliminarItem = (id: string) => {
@@ -461,6 +494,9 @@ export const InventarioView: React.FC = () => {
                     type="button"
                     onClick={() => {
                       setOpInput('');
+                      setDescInput('');
+                      setClienteInput('');
+                      setModeloSeleccionado(-1);
                       setShowSuggestions(false);
                     }}
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-[#A0AEC0] hover:text-white p-1 rounded hover:bg-[#1A202C] transition-colors"
@@ -716,6 +752,17 @@ export const InventarioView: React.FC = () => {
                 Lista Pendiente de Exportar
               </h2>
               <div className="flex gap-1.5 items-center flex-wrap">
+                {lista.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleImprimirInventario}
+                    className="flex items-center gap-1 text-[11px] text-white bg-[#2B6CB0] hover:bg-[#3182CE] py-1 px-2.5 rounded-md cursor-pointer transition-colors font-semibold"
+                    title="Imprimir lista de inventario"
+                  >
+                    <Printer size={12} />
+                    <span>Imprimir</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={handleAbrirRespaldo}
@@ -815,8 +862,9 @@ export const InventarioView: React.FC = () => {
                 Todavía no has agregado piezas a la lista pendiente.
               </div>
             ) : (
-              <div className="space-y-2 max-h-[600px] overflow-y-auto pr-1">
-                {lista.map((item) => {
+              <div className="space-y-2 max-h-[600px] overflow-y-auto pr-1 pb-12">
+                {lista.map((item, idx) => {
+                  const lineaNum = lista.length - idx;
                   const singular = item.tipoEmpaque === 'paquete' ? 'paquete' : 'caja';
                   const plural = item.tipoEmpaque === 'paquete' ? 'paquetes' : 'cajas';
                   const empaqueTxt = item.cantidadCajas === 1 ? singular : plural;
@@ -828,6 +876,9 @@ export const InventarioView: React.FC = () => {
                     >
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+                          <span className="text-[10px] font-bold text-[#A0AEC0] font-['IBM_Plex_Mono',monospace] bg-[#232A38] px-1.5 py-0.5 rounded border border-[#2D3748]">
+                            #{lineaNum}
+                          </span>
                           <span className="text-[10px] font-bold bg-[#3A2E1B] text-[#F6AD55] py-0.5 px-1.5 rounded border border-[#F2A93B]/30 font-['IBM_Plex_Mono',monospace]">
                             {item.op}
                           </span>
@@ -1113,22 +1164,33 @@ export const InventarioView: React.FC = () => {
       {/* Floating Bottom Bar for Inventario: only displayed when there are items to export */}
       {lista.length > 0 && (
         <div className="fixed bottom-[52px] md:bottom-0 left-0 right-0 bg-[#1A202C]/95 backdrop-blur-md border-t border-[#F2A93B] z-30 shadow-2xl">
-          <div className="max-w-[1440px] mx-auto px-3 sm:px-4 py-1.5 sm:py-2 flex items-center justify-between gap-3">
+          <div className="max-w-[1440px] mx-auto px-3 sm:px-4 py-1.5 sm:py-2 flex items-center justify-between gap-2.5">
             <div className="text-xs text-[#CBD5E0]">
-              <strong className="text-white font-semibold">{lista.length}</strong> pieza(s) ·{' '}
+              <strong className="text-white font-semibold">{lista.length}</strong> línea(s) ·{' '}
               <strong className="text-[#F2A93B] font-['IBM_Plex_Mono',monospace] tabular-nums">
                 {totalUnidadesLista.toLocaleString('es-PE')}
               </strong>{' '}
               u
             </div>
-            <button
-              type="button"
-              onClick={() => exportarInventarioExcel(lista, catalogo)}
-              className="flex items-center gap-1.5 bg-[#F2A93B] text-[#12161F] py-1 px-3 rounded-lg text-xs font-bold uppercase font-['Oswald',sans-serif] tracking-wider cursor-pointer transition-all hover:brightness-105 active:scale-95 shadow-sm"
-            >
-              <Download size={13} />
-              <span>Exportar Excel</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleImprimirInventario}
+                className="flex items-center gap-1.5 bg-[#2B6CB0] hover:bg-[#3182CE] text-white py-1 px-2.5 sm:px-3 rounded-lg text-xs font-bold uppercase font-['Oswald',sans-serif] tracking-wider cursor-pointer transition-all active:scale-95 shadow-sm"
+                title="Imprimir lista de inventario"
+              >
+                <Printer size={13} />
+                <span>Imprimir</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleExportarExcel}
+                className="flex items-center gap-1.5 bg-[#F2A93B] text-[#12161F] py-1 px-2.5 sm:px-3 rounded-lg text-xs font-bold uppercase font-['Oswald',sans-serif] tracking-wider cursor-pointer transition-all hover:brightness-105 active:scale-95 shadow-sm"
+              >
+                <Download size={13} />
+                <span>Exportar Excel</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

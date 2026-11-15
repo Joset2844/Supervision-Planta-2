@@ -443,32 +443,574 @@ export function agruparParaExportar(items: ListaItem[]) {
   });
 }
 
-export function exportarInventarioExcel(lista: ListaItem[], catalogo: CatalogoItem[]) {
-  const agrupado = agruparParaExportar(lista);
-  const filas = agrupado.map((i: any) => {
-    const match = buscarEnCatalogo(catalogo, i.op);
-    const empaqueTxt = i.tipoEmpaque === 'paquete' ? 'Paquete' : 'Caja';
+export function prepararFilasInventario(lista: ListaItem[], catalogo: CatalogoItem[]) {
+  // Mantener cada línea individual en orden cronológico de registro (sin agrupar ni sumar líneas)
+  const ordenadas = [...(lista || [])].reverse();
+  return ordenadas.map((item, idx) => {
+    const match = buscarEnCatalogo(catalogo, item.op);
+    const empaqueTxt = item.tipoEmpaque === 'paquete' ? 'Paquete' : 'Caja';
+    const sap = item.sap || (match && match.sap ? match.sap : '');
+    const unidadesXEmp = Number(item.unidadesXCaja) || 0;
+    const cantEmp = Number(item.cantidadCajas) || 0;
+    const totalUnid = Number(item.totalUnidades) || unidadesXEmp * cantEmp;
     return {
-      OP: i.op,
-      Descripción: i.descripcion,
-      Cliente: i.cliente,
-      SAP: i.sap || (match && match.sap ? match.sap : ''),
-      Empaque: empaqueTxt,
-      'Unidades x empaque': i.unidadesXCaja,
-      'Cantidad de empaques': i.cantidadCajas,
-      'Total unidades': i.totalUnidades,
-      Observación: i.observacion || '',
+      indice: idx + 1,
+      op: item.op || '',
+      sap,
+      descripcion: item.descripcion || '',
+      cliente: item.cliente || '',
+      empaque: empaqueTxt,
+      unidadesXEmp,
+      cantEmp,
+      totalUnid,
+      observacion: item.observacion || '',
     };
   });
-  const ws = XLSX.utils.json_to_sheet(filas);
-  ws['!cols'] = [{ wch: 14 }, { wch: 36 }, { wch: 22 }, { wch: 12 }, { wch: 10 }, { wch: 16 }, { wch: 18 }, { wch: 14 }, { wch: 30 }];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
-  const hoy = new Date().toISOString().slice(0, 10);
-  const nombre = `inventario_${hoy}.xlsx`;
-  const wbArray = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-  const blob = new Blob([wbArray], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  descargarBlob(blob, nombre);
+}
+
+export async function exportarInventarioExcel(lista: ListaItem[], catalogo: CatalogoItem[]) {
+  const filas = prepararFilasInventario(lista, catalogo);
+  if (filas.length === 0) return;
+
+  const totalUnidades = filas.reduce((acc, f) => acc + f.totalUnid, 0);
+  const totalEmpaques = filas.reduce((acc, f) => acc + f.cantEmp, 0);
+  const ahora = new Date();
+  const hoyIso = ahora.toISOString().slice(0, 10);
+  const fechaCorta = `${hoyIso.slice(8, 10)}/${hoyIso.slice(5, 7)}/${hoyIso.slice(0, 4)}`;
+  const fechaHora = ahora.toLocaleString('es-PE', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const nombre = `inventario_${hoyIso}.xlsx`;
+
+  try {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Inventario');
+    ws.columns = [
+      { width: 6 },  // #
+      { width: 13 }, // OP
+      { width: 15 }, // SAP
+      { width: 42 }, // DESCRIPCIÓN
+      { width: 24 }, // CLIENTE
+      { width: 12 }, // EMPAQUE
+      { width: 15 }, // UNID. X EMP.
+      { width: 14 }, // CANT. EMP.
+      { width: 17 }, // TOTAL UNIDADES
+      { width: 30 }, // OBSERVACIÓN
+    ];
+
+    // Row 1: Main Title Banner
+    ws.mergeCells(1, 1, 1, 10);
+    const rTitulo = ws.getRow(1);
+    rTitulo.height = 24;
+    rTitulo.getCell(1).value = `INVENTARIO DE PRODUCCIÓN — ${fechaCorta}`;
+    rTitulo.getCell(1).font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
+    rTitulo.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF12161F' } };
+    rTitulo.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+
+    // Row 2: Sub-banner with summary
+    ws.mergeCells(2, 1, 2, 10);
+    const rSub = ws.getRow(2);
+    rSub.height = 18;
+    rSub.getCell(1).value = `Generado: ${fechaHora}   |   Líneas registradas: ${filas.length}   |   Total empaques: ${totalEmpaques.toLocaleString('es-PE')}   |   Total unidades: ${totalUnidades.toLocaleString('es-PE')} u`;
+    rSub.getCell(1).font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+    rSub.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD97706' } };
+    rSub.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+
+    // Row 3: Column Headers
+    const headers = [
+      '#',
+      'OP',
+      'SAP',
+      'DESCRIPCIÓN / MODELO',
+      'CLIENTE',
+      'EMPAQUE',
+      'UNID. X EMP.',
+      'CANT. EMP.',
+      'TOTAL UNIDADES',
+      'OBSERVACIÓN',
+    ];
+    const rHead = ws.getRow(3);
+    rHead.height = 22;
+    headers.forEach((h, i) => {
+      const c = rHead.getCell(i + 1);
+      c.value = h;
+      c.font = { bold: true, size: 10, color: { argb: 'FF333333' } };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
+      c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      c.border = EXCELJS_BORDES;
+    });
+
+    // Data rows (sin agrupar ni sumar líneas entre sí)
+    let rowIdx = 4;
+    filas.forEach((f, idx) => {
+      const r = ws.getRow(rowIdx);
+      const vals = [
+        f.indice,
+        f.op,
+        f.sap,
+        f.descripcion,
+        f.cliente,
+        f.empaque,
+        f.unidadesXEmp,
+        f.cantEmp,
+        f.totalUnid,
+        f.observacion,
+      ];
+      const esPar = idx % 2 === 1;
+      vals.forEach((v, colIdx) => {
+        const c = r.getCell(colIdx + 1);
+        c.value = v;
+        c.border = EXCELJS_BORDES;
+        if (esPar) {
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFAFAFA' } };
+        }
+        if (colIdx === 0 || colIdx === 1 || colIdx === 2 || colIdx === 5) {
+          c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+          if (colIdx === 1) c.font = { bold: true, color: { argb: 'FF12161F' } };
+        } else if (colIdx === 6 || colIdx === 7 || colIdx === 8) {
+          c.alignment = { horizontal: 'right', vertical: 'middle' };
+          c.numFmt = '#,##0';
+          if (colIdx === 8) c.font = { bold: true, color: { argb: 'FF1E40AF' } };
+        } else {
+          c.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+        }
+      });
+      rowIdx++;
+    });
+
+    // Total Row
+    ws.mergeCells(rowIdx, 1, rowIdx, 7);
+    const rTot = ws.getRow(rowIdx);
+    rTot.height = 20;
+    rTot.getCell(1).value = `TOTAL GENERAL (${filas.length} LÍNEA${filas.length !== 1 ? 'S' : ''})`;
+    for (let i = 1; i <= 10; i++) {
+      const cell = rTot.getCell(i);
+      cell.font = { bold: true, size: 10.5 };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDEBD0' } };
+      cell.border = EXCELJS_BORDES;
+      cell.alignment = { vertical: 'middle' };
+    }
+    rTot.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
+    rTot.getCell(8).value = totalEmpaques;
+    rTot.getCell(8).numFmt = '#,##0';
+    rTot.getCell(8).alignment = { horizontal: 'right', vertical: 'middle' };
+    rTot.getCell(9).value = totalUnidades;
+    rTot.getCell(9).numFmt = '#,##0';
+    rTot.getCell(9).alignment = { horizontal: 'right', vertical: 'middle' };
+    rTot.getCell(9).font = { bold: true, size: 11, color: { argb: 'FFB45309' } };
+
+    ws.views = [{ state: 'frozen', ySplit: 3 }];
+    ws.pageSetup = {
+      orientation: 'landscape',
+      paperSize: 9,
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 1,
+    };
+
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    descargarBlob(blob, nombre);
+  } catch {
+    // Fallback to SheetJS (sin agrupar ni sumar líneas)
+    const filasSimple = filas.map((f) => ({
+      '#': f.indice,
+      OP: f.op,
+      SAP: f.sap,
+      Descripción: f.descripcion,
+      Cliente: f.cliente,
+      Empaque: f.empaque,
+      'Unidades x empaque': f.unidadesXEmp,
+      'Cantidad de empaques': f.cantEmp,
+      'Total unidades': f.totalUnid,
+      Observación: f.observacion,
+    }));
+    const ws = XLSX.utils.json_to_sheet(filasSimple);
+    ws['!cols'] = [
+      { wch: 6 },
+      { wch: 13 },
+      { wch: 14 },
+      { wch: 38 },
+      { wch: 22 },
+      { wch: 11 },
+      { wch: 16 },
+      { wch: 16 },
+      { wch: 16 },
+      { wch: 30 },
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
+    const wbArray = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([wbArray], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    descargarBlob(blob, nombre);
+  }
+}
+
+export function imprimirInventarioFormatoExcel(lista: ListaItem[], catalogo: CatalogoItem[]) {
+  const filas = prepararFilasInventario(lista, catalogo);
+  if (filas.length === 0) return;
+
+  const totalUnidades = filas.reduce((acc, f) => acc + f.totalUnid, 0);
+  const totalEmpaques = filas.reduce((acc, f) => acc + f.cantEmp, 0);
+  const ahora = new Date();
+  const fechaCorta = ahora.toLocaleDateString('es-PE', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+  const fechaHora = ahora.toLocaleString('es-PE', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+  const titulo = `INVENTARIO DE PRODUCCIÓN — ${fechaCorta}`;
+  const subtitulo = `Generado: ${fechaHora} · Detalle por línea registrada (${filas.length} registro${filas.length !== 1 ? 's' : ''})`;
+
+  const tbodyHtml = filas
+    .map(
+      (f, idx) => `
+      <tr class="${idx % 2 === 1 ? 'alt-row' : ''}">
+        <td class="idx-cell">${f.indice}</td>
+        <td class="op-cell">${escapeHtml(f.op)}</td>
+        <td class="sap-cell">${escapeHtml(f.sap || '—')}</td>
+        <td class="prod-cell">${escapeHtml(f.descripcion)}</td>
+        <td class="cli-cell">${escapeHtml(f.cliente || '—')}</td>
+        <td class="emp-cell">${escapeHtml(f.empaque)}</td>
+        <td class="num">${f.unidadesXEmp.toLocaleString('es-PE')}</td>
+        <td class="num">${f.cantEmp.toLocaleString('es-PE')}</td>
+        <td class="num total-cell">${f.totalUnid.toLocaleString('es-PE')}</td>
+        <td class="obs-cell">${escapeHtml(f.observacion)}</td>
+      </tr>`
+    )
+    .join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>${escapeHtml(titulo)}</title>
+  <style>
+    @page {
+      size: A4 landscape;
+      margin: 5mm;
+    }
+    * {
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 285mm;
+      max-width: 285mm;
+      background: #ffffff;
+      font-family: Arial, Helvetica, sans-serif;
+      color: #111827;
+      font-size: 9.5px;
+    }
+    @media print {
+      html, body {
+        width: 285mm;
+        height: auto;
+        max-height: 192mm;
+        overflow: hidden !important;
+      }
+    }
+    #print-viewport {
+      width: 285mm;
+      overflow: hidden;
+      page-break-inside: avoid;
+      break-inside: avoid;
+      page-break-after: avoid;
+      break-after: avoid;
+    }
+    #sheet-content {
+      width: 285mm;
+      transform-origin: top left;
+    }
+    .title-banner {
+      background: #12161F;
+      color: #FFFFFF;
+      padding: 6px 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 3px solid #F2A93B;
+      margin-bottom: 6px;
+    }
+    .title-main {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+    }
+    .title-sub {
+      font-size: 9px;
+      color: #CBD5E0;
+      margin-top: 1px;
+    }
+    .title-stats {
+      text-align: right;
+      font-size: 10px;
+      white-space: nowrap;
+    }
+    .title-stats strong {
+      color: #F2A93B;
+      font-size: 11px;
+    }
+    .area-banner {
+      background: #D97706;
+      color: #FFFFFF;
+      font-weight: 700;
+      font-size: 10px;
+      padding: 3px 7px;
+      letter-spacing: 0.4px;
+      border: 1px solid #B7B7B7;
+      border-bottom: none;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    th, td {
+      border: 1px solid #B7B7B7;
+      padding: 2.5px 4.5px;
+      vertical-align: middle;
+      word-wrap: break-word;
+      overflow-wrap: anywhere;
+      line-height: 1.2;
+    }
+    th {
+      background: #F2F2F2;
+      color: #333333;
+      font-weight: 700;
+      font-size: 8.5px;
+      text-align: center;
+    }
+    .alt-row td {
+      background: #FAFAFA;
+    }
+    .idx-cell, .op-cell, .sap-cell, .emp-cell {
+      font-family: 'Courier New', Courier, monospace;
+      text-align: center;
+      font-size: 9px;
+    }
+    .op-cell {
+      font-weight: 700;
+      color: #12161F;
+    }
+    .prod-cell, .cli-cell, .obs-cell {
+      text-align: left;
+    }
+    .num {
+      text-align: right;
+      font-family: 'Courier New', Courier, monospace;
+      font-weight: 600;
+    }
+    .total-cell {
+      font-weight: 700;
+      color: #1E40AF;
+    }
+    .total-row td {
+      background: #FDEBD0;
+      font-weight: 700;
+      font-size: 9.5px;
+    }
+    .grand-total {
+      margin-top: 5px;
+      background: #12161F;
+      color: #FFFFFF;
+      padding: 5px 9px;
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      font-weight: 700;
+      border-radius: 2px;
+    }
+    .grand-total span.val {
+      color: #F2A93B;
+      font-family: 'Courier New', Courier, monospace;
+    }
+    .grand-total span.sub-val {
+      color: #93C5FD;
+      font-family: 'Courier New', Courier, monospace;
+      margin-right: 12px;
+    }
+
+    #sheet-content.compact .title-banner { padding: 4px 8px; margin-bottom: 4px; }
+    #sheet-content.compact .title-main { font-size: 12px; }
+    #sheet-content.compact .area-banner { padding: 2px 6px; font-size: 9.5px; }
+    #sheet-content.compact th,
+    #sheet-content.compact td { padding: 1.8px 3.5px; font-size: 8.8px; line-height: 1.15; }
+    #sheet-content.compact th { font-size: 8px; }
+    #sheet-content.compact .grand-total { padding: 4px 8px; font-size: 9px; margin-top: 3px; }
+
+    #sheet-content.ultra-compact .title-banner { padding: 3px 7px; margin-bottom: 3px; }
+    #sheet-content.ultra-compact .title-main { font-size: 11px; }
+    #sheet-content.ultra-compact .area-banner { padding: 1.5px 5px; font-size: 9px; }
+    #sheet-content.ultra-compact th,
+    #sheet-content.ultra-compact td { padding: 1.2px 3px; font-size: 8.2px; line-height: 1.12; }
+    #sheet-content.ultra-compact th { font-size: 7.6px; }
+    #sheet-content.ultra-compact .grand-total { padding: 3px 7px; font-size: 8.5px; margin-top: 2px; }
+  </style>
+</head>
+<body>
+  <div id="mm-ruler" style="position:absolute;top:-9999px;left:0;width:100mm;height:100mm;visibility:hidden;pointer-events:none;"></div>
+  <div id="print-viewport">
+    <div id="sheet-content">
+      <div class="title-banner">
+        <div>
+          <div class="title-main">${escapeHtml(titulo)}</div>
+          <div class="title-sub">${escapeHtml(subtitulo)}</div>
+        </div>
+        <div class="title-stats">
+          Total: <strong>${totalUnidades.toLocaleString('es-PE')} u</strong>
+          <span style="color:#A0AEC0;margin-left:8px;">(${filas.length} líneas)</span>
+        </div>
+      </div>
+
+      <div class="area-banner">DETALLE DE PIEZAS Y EMPAQUES REGISTRADOS</div>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:4%">#</th>
+            <th style="width:8%">OP</th>
+            <th style="width:9%">SAP</th>
+            <th style="width:24%">DESCRIPCIÓN / MODELO</th>
+            <th style="width:15%">CLIENTE</th>
+            <th style="width:7%">EMPAQUE</th>
+            <th style="width:8%">UNID. × EMP.</th>
+            <th style="width:7%">CANT. EMP.</th>
+            <th style="width:9%">TOTAL UNID.</th>
+            <th style="width:9%">OBSERVACIÓN</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${tbodyHtml}
+          <tr class="total-row">
+            <td colspan="7">TOTAL GENERAL (${filas.length} LÍNEA${filas.length !== 1 ? 'S' : ''})</td>
+            <td class="num">${totalEmpaques.toLocaleString('es-PE')}</td>
+            <td class="num total-cell">${totalUnidades.toLocaleString('es-PE')}</td>
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="grand-total">
+        <span>RESUMEN DE INVENTARIO (${filas.length} LÍNEAS)</span>
+        <div>
+          EMPAQUES: <span class="sub-val">${totalEmpaques.toLocaleString('es-PE')}</span>
+          TOTAL UNIDADES: <span class="val">${totalUnidades.toLocaleString('es-PE')} u</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.left = '-12000px';
+  iframe.style.top = '0';
+  iframe.style.width = '1200px';
+  iframe.style.height = '900px';
+  iframe.style.border = '0';
+  iframe.style.opacity = '0';
+  iframe.style.pointerEvents = 'none';
+  iframe.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentWindow?.document;
+  if (!doc || !iframe.contentWindow) {
+    document.body.removeChild(iframe);
+    return;
+  }
+
+  doc.open();
+  doc.write(html);
+  doc.close();
+
+  const fitSingleLandscapePage = () => {
+    const ruler = doc.getElementById('mm-ruler');
+    const viewport = doc.getElementById('print-viewport');
+    const content = doc.getElementById('sheet-content');
+    if (!ruler || !viewport || !content) return;
+
+    const rulerRect = ruler.getBoundingClientRect();
+    const pxPerMm = rulerRect.height > 0 ? rulerRect.height / 100 : 3.7795275591;
+    const widthMm = 285;
+    const maxHeightMm = 190;
+    const maxH = maxHeightMm * pxPerMm;
+
+    content.style.width = `${widthMm}mm`;
+
+    if (content.scrollHeight > maxH) {
+      content.classList.add('compact');
+    }
+    if (content.scrollHeight > maxH * 1.18) {
+      content.classList.add('ultra-compact');
+    }
+
+    let bestScale = 1;
+    if (content.scrollHeight > maxH) {
+      let low = 0.25;
+      let high = 1.0;
+      bestScale = 0.25;
+
+      for (let step = 0; step < 14; step++) {
+        const mid = (low + high) / 2;
+        content.style.width = `${(widthMm / mid).toFixed(3)}mm`;
+        const h = content.scrollHeight;
+        if (h * mid <= maxH * 0.985) {
+          bestScale = mid;
+          low = mid;
+        } else {
+          high = mid;
+        }
+      }
+
+      content.style.width = `${(widthMm / bestScale).toFixed(3)}mm`;
+      content.style.transform = `scale(${bestScale.toFixed(5)})`;
+      content.style.transformOrigin = 'top left';
+    }
+
+    const scaledHeightMm = Math.min(maxHeightMm, (content.scrollHeight / pxPerMm) * bestScale + 0.5);
+    viewport.style.width = `${widthMm}mm`;
+    viewport.style.height = `${scaledHeightMm.toFixed(2)}mm`;
+    viewport.style.overflow = 'hidden';
+
+    ruler.remove();
+  };
+
+  const cleanup = () => {
+    if (iframe.parentNode) {
+      iframe.parentNode.removeChild(iframe);
+    }
+  };
+
+  iframe.contentWindow.addEventListener('afterprint', cleanup, { once: true });
+  setTimeout(() => {
+    try {
+      fitSingleLandscapePage();
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    } finally {
+      setTimeout(cleanup, 60000);
+    }
+  }, 180);
 }
 
 // ----------------- TURNO INSTANCIAS & MULTI-OP -----------------

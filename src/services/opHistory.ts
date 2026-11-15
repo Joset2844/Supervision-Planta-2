@@ -13,6 +13,7 @@ export interface MaquinaRegistroOp {
   maquina: string;
   codigoMaquina: string;
   tipoProducto: 'pp' | 'pt' | '';
+  sap: string;
   producto: string;
   total: number;
   merma: number;
@@ -215,6 +216,7 @@ export async function consultarHistorialOp(params: {
       maquina: f.maquina || 'Sin máquina',
       codigoMaquina: f.codigoMaquina || '',
       tipoProducto: resolverTipo(maqTipoMap, f.tipoProducto, f.maquina, f.codigoMaquina),
+      sap: f.sap || '',
       producto: f.producto || '',
       total: Number(f.total) || 0,
       merma: Number(f.merma) || 0,
@@ -244,6 +246,7 @@ export async function consultarHistorialOp(params: {
       maquina: f.maquina || 'Sin máquina',
       codigoMaquina: f.codigoMaquina || '',
       tipoProducto: resolverTipo(maqTipoMap, f.tipoProducto, f.maquina, f.codigoMaquina),
+      sap: f.sap || '',
       producto: f.producto || '',
       total: Number(f.total) || 0,
       merma: Number(f.merma) || 0,
@@ -260,25 +263,36 @@ export async function consultarHistorialOp(params: {
     return pesoTipo(b.tipo) - pesoTipo(a.tipo);
   });
 
-  // 3. Procesar turno activo actual
+  // 3. Procesar turno activo actual (agrupado por máquina + producto + sap)
   const filasActuales: MaquinaRegistroOp[] = [];
   (turno || []).forEach((t) => {
     const m = maquinas.find((x) => x.id === t.maquinaId);
     const regs = (t.registros || []).filter((r) => opCoincide(r.op || t.op, op));
-    const sumaMaq = regs.reduce((s, r) => s + (Number(r.cantidad) || 0), 0);
-    const mermaMaq = regs.reduce((s, r) => s + (Number(r.merma) || 0), 0);
-    if (sumaMaq > 0 || mermaMaq > 0) {
-      const desc = regs.find((r) => r.descripcion)?.descripcion || '';
-      filasActuales.push({
-        maquina: m ? m.nombre : 'Máquina',
-        codigoMaquina: m?.codigo || '',
-        tipoProducto: m?.tipoProducto || '',
-        producto: desc,
-        total: sumaMaq,
-        merma: mermaMaq,
-        observaciones: t.observaciones || '',
-      });
-    }
+    const gruposActual = new Map<string, MaquinaRegistroOp>();
+    regs.forEach((r) => {
+      const cant = Number(r.cantidad) || 0;
+      const merma = Number(r.merma) || 0;
+      if (cant <= 0 && merma <= 0) return;
+      const prod = r.descripcion || '';
+      const sap = r.sap || '';
+      const gKey = `${prod}||${sap}`;
+      if (!gruposActual.has(gKey)) {
+        gruposActual.set(gKey, {
+          maquina: m ? m.nombre : 'Máquina',
+          codigoMaquina: m?.codigo || '',
+          tipoProducto: m?.tipoProducto || '',
+          sap,
+          producto: prod,
+          total: 0,
+          merma: 0,
+          observaciones: t.observaciones || '',
+        });
+      }
+      const g = gruposActual.get(gKey)!;
+      g.total += cant;
+      g.merma += merma;
+    });
+    gruposActual.forEach((g) => filasActuales.push(g));
   });
 
   const turnoActualResumen =

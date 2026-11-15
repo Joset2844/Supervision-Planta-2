@@ -11,6 +11,7 @@ import {
   Package,
   Layers,
   TrendingUp,
+  FileDown,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { buscarEnCatalogo, descripcionCorta } from '../../services/excel';
@@ -20,10 +21,11 @@ import {
   ConsultaOpResultado,
   TurnoOpResumen,
 } from '../../services/opHistory';
+import { exportarPdfReporteOp } from '../../services/pdfOp';
 import { CatalogoItem } from '../../types';
 
 export const HistorialOpTab: React.FC = () => {
-  const { catalogo, historial, maquinas, turno, metaTurno, session } = useApp();
+  const { catalogo, historial, maquinas, turno, metaTurno, session, showToast } = useApp();
 
   const [opInput, setOpInput] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -126,6 +128,21 @@ export const HistorialOpTab: React.FC = () => {
     return lista;
   }, [resultado]);
 
+  const handleDescargarPdfOp = () => {
+    if (!opConsultada || !resultado) return;
+    try {
+      const { nombreArchivo } = exportarPdfReporteOp({
+        op: opConsultada,
+        catalogMatch,
+        resultado,
+      });
+      showToast('ok', `PDF generado: ${nombreArchivo}`);
+    } catch (err) {
+      console.error('Error al generar PDF de OP:', err);
+      showToast('error', 'No se pudo generar el reporte PDF de la OP');
+    }
+  };
+
   return (
     <div className="space-y-4 sm:space-y-5">
       {/* Search Card */}
@@ -138,15 +155,28 @@ export const HistorialOpTab: React.FC = () => {
             </h2>
           </div>
           {opConsultada && (
-            <button
-              type="button"
-              disabled={cargando}
-              onClick={() => ejecutarConsulta(opConsultada)}
-              className="flex items-center gap-1.5 py-1 px-2.5 rounded-lg border border-[#4A5568] bg-[#232A38] text-[#CBD5E0] hover:text-white text-xs font-semibold cursor-pointer disabled:opacity-50"
-            >
-              <RefreshCw size={12} className={cargando ? 'animate-spin' : ''} />
-              <span>Actualizar</span>
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              {resultado && !cargando && (
+                <button
+                  type="button"
+                  onClick={handleDescargarPdfOp}
+                  className="flex items-center gap-1.5 py-1 px-3 rounded-lg bg-[#2B6CB0] hover:bg-[#3182CE] text-white text-xs font-bold cursor-pointer shadow-sm transition-colors"
+                  title="Descargar reporte completo de esta OP en PDF"
+                >
+                  <FileDown size={13} />
+                  <span>Reporte PDF</span>
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={cargando}
+                onClick={() => ejecutarConsulta(opConsultada)}
+                className="flex items-center gap-1.5 py-1 px-2.5 rounded-lg border border-[#4A5568] bg-[#232A38] text-[#CBD5E0] hover:text-white text-xs font-semibold cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw size={12} className={cargando ? 'animate-spin' : ''} />
+                <span>Actualizar</span>
+              </button>
+            </div>
           )}
         </div>
 

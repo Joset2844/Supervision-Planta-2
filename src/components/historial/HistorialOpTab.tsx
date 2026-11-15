@@ -128,6 +128,11 @@ export const HistorialOpTab: React.FC = () => {
     return lista;
   }, [resultado]);
 
+  const ppPorMaquina = useMemo(
+    () => (resultado?.porMaquina || []).filter((m) => m.tipoProducto === 'pp'),
+    [resultado]
+  );
+
   const handleDescargarPdfOp = () => {
     if (!opConsultada || !resultado) return;
     try {
@@ -367,133 +372,166 @@ export const HistorialOpTab: React.FC = () => {
             )}
           </div>
 
-          {/* Separated Totals Cards: PT vs PP */}
-          <div
-            className={`grid grid-cols-1 gap-3 ${
-              totales.acumSinTipo > 0 ? 'md:grid-cols-3' : 'md:grid-cols-2'
-            }`}
-          >
-            {/* Card PT */}
-            <div className="bg-[#1A202C] border border-[#63B3ED]/40 rounded-2xl p-4 shadow-sm space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-[#63B3ED]/20 text-[#63B3ED] font-['IBM_Plex_Mono',monospace]">
-                    PT
-                  </span>
-                  <span className="text-xs uppercase tracking-wider text-white font-bold font-['Oswald',sans-serif]">
-                    Producto Terminado
-                  </span>
-                </div>
-                {cantidadOrden > 0 && (
-                  <span
-                    className={`text-xs font-bold font-['IBM_Plex_Mono',monospace] ${
-                      pctPT >= 100 ? 'text-[#48BB78]' : 'text-[#93C5FD]'
-                    }`}
-                  >
-                    {pctPT.toFixed(1)}%
-                  </span>
-                )}
-              </div>
-
-              <div className="font-['IBM_Plex_Mono',monospace] text-2xl font-bold text-[#63B3ED] tabular-nums">
-                {totales.acumPT.toLocaleString('es-PE')} u
-              </div>
-
-              <div className="text-xs text-[#CBD5E0] font-['IBM_Plex_Mono',monospace] flex items-center gap-2.5 flex-wrap">
-                <span>Turnos ant.: {totales.antPT.toLocaleString('es-PE')} u</span>
-                {totales.actualPT > 0 && (
-                  <span className="text-[#48BB78] font-semibold">
-                    · Turno actual: +{totales.actualPT.toLocaleString('es-PE')} u
-                  </span>
-                )}
-                {totales.mermaAcumPT > 0 && (
-                  <span className="text-[#FC8181]">
-                    · -{totales.mermaAcumPT.toLocaleString('es-PE')} merma
-                  </span>
-                )}
-              </div>
-
-              {cantidadOrden > 0 && (
-                <div className="pt-1 space-y-1">
-                  <div className="w-full bg-[#12161F] rounded-full h-2 overflow-hidden border border-[#2D3748]">
-                    <div
-                      className={`h-full rounded-full transition-all duration-300 ${
-                        pctPT >= 100 ? 'bg-[#38A169]' : 'bg-[#63B3ED]'
-                      }`}
-                      style={{ width: `${Math.min(100, Math.max(0, pctPT))}%` }}
-                    />
+          {/* Separated Totals: PT (summed) & PP (by machine small cards) */}
+          <div className="space-y-3">
+            <div
+              className={`grid grid-cols-1 gap-3 ${
+                totales.acumSinTipo > 0 ? 'md:grid-cols-2' : ''
+              }`}
+            >
+              {/* Card PT (mantiene lógica acumulada) */}
+              <div className="bg-[#1A202C] border border-[#63B3ED]/40 rounded-2xl p-4 shadow-sm space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-[#63B3ED]/20 text-[#63B3ED] font-['IBM_Plex_Mono',monospace]">
+                      PT
+                    </span>
+                    <span className="text-xs uppercase tracking-wider text-white font-bold font-['Oswald',sans-serif]">
+                      Producto Terminado
+                    </span>
                   </div>
-                  <div className="text-[11px] text-[#A0AEC0] font-['IBM_Plex_Mono',monospace]">
-                    {pendientePT > 0
-                      ? `Faltan ${pendientePT.toLocaleString('es-PE')} u para completar la orden`
-                      : pendientePT < 0
-                      ? `+${Math.abs(pendientePT).toLocaleString('es-PE')} u sobre la cantidad de orden`
-                      : 'Orden completada al 100% en PT'}
+                  {cantidadOrden > 0 && (
+                    <span
+                      className={`text-xs font-bold font-['IBM_Plex_Mono',monospace] ${
+                        pctPT >= 100 ? 'text-[#48BB78]' : 'text-[#93C5FD]'
+                      }`}
+                    >
+                      {pctPT.toFixed(1)}%
+                    </span>
+                  )}
+                </div>
+
+                <div className="font-['IBM_Plex_Mono',monospace] text-2xl font-bold text-[#63B3ED] tabular-nums">
+                  {totales.acumPT.toLocaleString('es-PE')} u
+                </div>
+
+                <div className="text-xs text-[#CBD5E0] font-['IBM_Plex_Mono',monospace] flex items-center gap-2.5 flex-wrap">
+                  <span>Turnos ant.: {totales.antPT.toLocaleString('es-PE')} u</span>
+                  {totales.actualPT > 0 && (
+                    <span className="text-[#48BB78] font-semibold">
+                      · Turno actual: +{totales.actualPT.toLocaleString('es-PE')} u
+                    </span>
+                  )}
+                  {totales.mermaAcumPT > 0 && (
+                    <span className="text-[#FC8181]">
+                      · -{totales.mermaAcumPT.toLocaleString('es-PE')} merma
+                    </span>
+                  )}
+                </div>
+
+                {cantidadOrden > 0 && (
+                  <div className="pt-1 space-y-1">
+                    <div className="w-full bg-[#12161F] rounded-full h-2 overflow-hidden border border-[#2D3748]">
+                      <div
+                        className={`h-full rounded-full transition-all duration-300 ${
+                          pctPT >= 100 ? 'bg-[#38A169]' : 'bg-[#63B3ED]'
+                        }`}
+                        style={{ width: `${Math.min(100, Math.max(0, pctPT))}%` }}
+                      />
+                    </div>
+                    <div className="text-[11px] text-[#A0AEC0] font-['IBM_Plex_Mono',monospace]">
+                      {pendientePT > 0
+                        ? `Faltan ${pendientePT.toLocaleString('es-PE')} u para completar la orden`
+                        : pendientePT < 0
+                        ? `+${Math.abs(pendientePT).toLocaleString('es-PE')} u sobre la cantidad de orden`
+                        : 'Orden completada al 100% en PT'}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Card Sin Tipo (legacy) */}
+              {totales.acumSinTipo > 0 && (
+                <div className="bg-[#1A202C] border border-[#4A5568] rounded-2xl p-4 shadow-sm space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-[#4A5568]/40 text-[#CBD5E0] font-['IBM_Plex_Mono',monospace]">
+                      S/T
+                    </span>
+                    <span className="text-xs uppercase tracking-wider text-white font-bold font-['Oswald',sans-serif]">
+                      Sin Clasificar
+                    </span>
+                  </div>
+                  <div className="font-['IBM_Plex_Mono',monospace] text-2xl font-bold text-white tabular-nums">
+                    {totales.acumSinTipo.toLocaleString('es-PE')} u
+                  </div>
+                  <div className="text-xs text-[#CBD5E0] font-['IBM_Plex_Mono',monospace]">
+                    Ant.: {totales.antSinTipo.toLocaleString('es-PE')} u
+                    {totales.actualSinTipo > 0 && (
+                      <span className="text-[#48BB78] ml-2">
+                        · Actual: +{totales.actualSinTipo.toLocaleString('es-PE')} u
+                      </span>
+                    )}
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Card PP */}
-            <div className="bg-[#1A202C] border border-[#F2A93B]/40 rounded-2xl p-4 shadow-sm space-y-2">
-              <div className="flex items-center justify-between gap-2">
+            {/* PP separado por máquinas en cuadros pequeños (sin sumar entre máquinas) */}
+            <div className="bg-[#1A202C] border border-[#F2A93B]/35 rounded-2xl p-3.5 sm:p-4 shadow-sm space-y-2.5">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-[#F2A93B]/20 text-[#F6AD55] font-['IBM_Plex_Mono',monospace]">
                     PP
                   </span>
                   <span className="text-xs uppercase tracking-wider text-white font-bold font-['Oswald',sans-serif]">
-                    Producto en Proceso
+                    Producto en Proceso por Máquina
                   </span>
                 </div>
+                <span className="text-[11px] text-[#A0AEC0]">
+                  {ppPorMaquina.length > 0
+                    ? `${ppPorMaquina.length} máquina(s) · procesos independientes`
+                    : 'Sin registros en proceso'}
+                </span>
               </div>
 
-              <div className="font-['IBM_Plex_Mono',monospace] text-2xl font-bold text-[#F2A93B] tabular-nums">
-                {totales.acumPP.toLocaleString('es-PE')} u
-              </div>
+              {ppPorMaquina.length === 0 ? (
+                <div className="bg-[#12161F] border border-dashed border-[#2D3748] rounded-xl px-3 py-2.5 text-xs text-[#A0AEC0]">
+                  No hay producción registrada en PP para esta OP.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5">
+                  {ppPorMaquina.map((mq) => (
+                    <div
+                      key={mq.key}
+                      className="bg-[#12161F] border border-[#F2A93B]/35 rounded-xl px-3 py-2.5 space-y-1 hover:border-[#F2A93B]/60 transition-colors"
+                    >
+                      <div className="flex items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <Cpu size={12} className="text-[#F2A93B] shrink-0" />
+                          <span className="text-xs font-bold text-white truncate font-['IBM_Plex_Mono',monospace]">
+                            {mq.maquina}
+                          </span>
+                        </div>
+                        {mq.codigoMaquina && (
+                          <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-[#232A38] border border-[#4A5568] text-[#CBD5E0] font-['IBM_Plex_Mono',monospace] shrink-0">
+                            {mq.codigoMaquina}
+                          </span>
+                        )}
+                      </div>
 
-              <div className="text-xs text-[#CBD5E0] font-['IBM_Plex_Mono',monospace] flex items-center gap-2.5 flex-wrap">
-                <span>Turnos ant.: {totales.antPP.toLocaleString('es-PE')} u</span>
-                {totales.actualPP > 0 && (
-                  <span className="text-[#48BB78] font-semibold">
-                    · Turno actual: +{totales.actualPP.toLocaleString('es-PE')} u
-                  </span>
-                )}
-                {totales.mermaAcumPP > 0 && (
-                  <span className="text-[#FC8181]">
-                    · -{totales.mermaAcumPP.toLocaleString('es-PE')} merma
-                  </span>
-                )}
-              </div>
+                      <div className="font-['IBM_Plex_Mono',monospace] text-lg font-bold text-[#F2A93B] tabular-nums">
+                        {mq.totalAcumulado.toLocaleString('es-PE')} u
+                      </div>
 
-              <div className="text-[11px] text-[#A0AEC0] pt-1">
-                Total independiente para etapas de proceso (impresión / pliegos / semielaborado).
-              </div>
+                      <div className="text-[10.5px] text-[#A0AEC0] font-['IBM_Plex_Mono',monospace] flex items-center gap-1.5 flex-wrap">
+                        <span>Ant: {mq.totalAnterior.toLocaleString('es-PE')}</span>
+                        {mq.totalActual > 0 && (
+                          <span className="text-[#48BB78] font-semibold">
+                            · Act: +{mq.totalActual.toLocaleString('es-PE')}
+                          </span>
+                        )}
+                        {mq.mermaAcumulada > 0 && (
+                          <span className="text-[#FC8181]">
+                            · -{mq.mermaAcumulada.toLocaleString('es-PE')} m
+                          </span>
+                        )}
+                        <span className="text-[#718096]">· {mq.turnosCount} t.</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-
-            {/* Card Sin Tipo (legacy) */}
-            {totales.acumSinTipo > 0 && (
-              <div className="bg-[#1A202C] border border-[#4A5568] rounded-2xl p-4 shadow-sm space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-[#4A5568]/40 text-[#CBD5E0] font-['IBM_Plex_Mono',monospace]">
-                    S/T
-                  </span>
-                  <span className="text-xs uppercase tracking-wider text-white font-bold font-['Oswald',sans-serif]">
-                    Sin Clasificar
-                  </span>
-                </div>
-                <div className="font-['IBM_Plex_Mono',monospace] text-2xl font-bold text-white tabular-nums">
-                  {totales.acumSinTipo.toLocaleString('es-PE')} u
-                </div>
-                <div className="text-xs text-[#CBD5E0] font-['IBM_Plex_Mono',monospace]">
-                  Ant.: {totales.antSinTipo.toLocaleString('es-PE')} u
-                  {totales.actualSinTipo > 0 && (
-                    <span className="text-[#48BB78] ml-2">
-                      · Actual: +{totales.actualSinTipo.toLocaleString('es-PE')} u
-                    </span>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
 
           {resultado.porMaquina.length === 0 && todosLosTurnos.length === 0 ? (
@@ -637,11 +675,14 @@ export const HistorialOpTab: React.FC = () => {
                               PT: +{t.totalPT.toLocaleString('es-PE')} u
                             </span>
                           )}
-                          {(t.totalPP > 0 || t.filas.some((f) => f.tipoProducto === 'pp')) && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#F2A93B]/15 border border-[#F2A93B]/30 text-[#F6AD55] font-bold tabular-nums">
-                              PP: +{t.totalPP.toLocaleString('es-PE')} u
+                          {t.ppPorMaquina.map((pm, pIdx) => (
+                            <span
+                              key={pIdx}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#F2A93B]/15 border border-[#F2A93B]/30 text-[#F6AD55] font-bold tabular-nums"
+                            >
+                              PP ({pm.maquina}): +{pm.total.toLocaleString('es-PE')} u
                             </span>
-                          )}
+                          ))}
                           {t.totalSinTipo > 0 && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#2D3748] text-[#CBD5E0] font-bold tabular-nums">
                               +{t.totalSinTipo.toLocaleString('es-PE')} u

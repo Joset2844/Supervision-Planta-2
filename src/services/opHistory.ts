@@ -20,6 +20,13 @@ export interface MaquinaRegistroOp {
   observaciones: string;
 }
 
+export interface MaquinaPPSum {
+  maquina: string;
+  codigoMaquina: string;
+  total: number;
+  merma: number;
+}
+
 export interface TurnoOpResumen {
   key: string;
   fecha: string;
@@ -27,6 +34,7 @@ export interface TurnoOpResumen {
   fuente: 'nube' | 'local' | 'actual';
   totalPP: number;
   mermaPP: number;
+  ppPorMaquina: MaquinaPPSum[];
   totalPT: number;
   mermaPT: number;
   totalSinTipo: number;
@@ -127,10 +135,25 @@ function construirTurnoOpResumen(
   let totalSinTipo = 0;
   let mermaSinTipo = 0;
 
+  const ppMap = new Map<string, MaquinaPPSum>();
+
   filasRaw.forEach((r) => {
     if (r.tipoProducto === 'pp') {
       totalPP += r.total;
       mermaPP += r.merma;
+      const mKey = (r.maquina || 'Sin máquina').trim().toLowerCase();
+      if (!ppMap.has(mKey)) {
+        ppMap.set(mKey, {
+          maquina: r.maquina || 'Sin máquina',
+          codigoMaquina: r.codigoMaquina || '',
+          total: 0,
+          merma: 0,
+        });
+      }
+      const entry = ppMap.get(mKey)!;
+      if (!entry.codigoMaquina && r.codigoMaquina) entry.codigoMaquina = r.codigoMaquina;
+      entry.total += r.total;
+      entry.merma += r.merma;
     } else if (r.tipoProducto === 'pt') {
       totalPT += r.total;
       mermaPT += r.merma;
@@ -142,6 +165,7 @@ function construirTurnoOpResumen(
 
   const peso = (tp: string) => (tp === 'pt' ? 0 : tp === 'pp' ? 1 : 2);
   const filas = [...filasRaw].sort((a, b) => peso(a.tipoProducto) - peso(b.tipoProducto));
+  const ppPorMaquina = Array.from(ppMap.values());
 
   return {
     key,
@@ -150,6 +174,7 @@ function construirTurnoOpResumen(
     fuente,
     totalPP,
     mermaPP,
+    ppPorMaquina,
     totalPT,
     mermaPT,
     totalSinTipo,

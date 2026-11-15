@@ -72,6 +72,11 @@ export const HistorialOpModal: React.FC<HistorialOpModalProps> = ({ op, onClose 
     mermaAcumSinTipo: 0,
   };
 
+  const ppPorMaquina = useMemo(
+    () => (resultado?.porMaquina || []).filter((m) => m.tipoProducto === 'pp'),
+    [resultado]
+  );
+
   const cantidadOrden = Number(catalogMatch?.cantidadTotal || 0);
   const pctPT = cantidadOrden > 0 ? (totales.acumPT / cantidadOrden) * 100 : 0;
   const pendientePT = cantidadOrden > 0 ? cantidadOrden - totales.acumPT : 0;
@@ -125,11 +130,11 @@ export const HistorialOpModal: React.FC<HistorialOpModalProps> = ({ op, onClose 
           </button>
         </div>
 
-        {/* Summary KPI Strip separated by PT and PP */}
+        {/* Summary KPI Strip: PT summed + PP separated by machine in small cards */}
         <div className="px-4 py-3 bg-[#141923] border-b border-[#2D3748] space-y-2.5 shrink-0">
           <div
             className={`grid grid-cols-1 gap-2.5 ${
-              totales.acumSinTipo > 0 ? 'sm:grid-cols-3' : 'sm:grid-cols-2'
+              totales.acumSinTipo > 0 ? 'sm:grid-cols-2' : ''
             }`}
           >
             {/* PT - Producto Terminado */}
@@ -193,42 +198,6 @@ export const HistorialOpModal: React.FC<HistorialOpModalProps> = ({ op, onClose 
               )}
             </div>
 
-            {/* PP - Producto en Proceso */}
-            <div className="bg-[#1A202C] border border-[#F2A93B]/30 rounded-xl px-3 py-2.5 space-y-1">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#F2A93B]/20 text-[#F6AD55] font-['IBM_Plex_Mono',monospace]">
-                    PP
-                  </span>
-                  <span className="text-[10.5px] uppercase tracking-wider text-[#CBD5E0] font-semibold">
-                    Producto en Proceso
-                  </span>
-                </div>
-              </div>
-
-              <div className="font-['IBM_Plex_Mono',monospace] text-base sm:text-lg font-bold text-[#F2A93B] tabular-nums">
-                {totales.acumPP.toLocaleString('es-PE')} u
-              </div>
-
-              <div className="text-[10.5px] text-[#A0AEC0] font-['IBM_Plex_Mono',monospace] flex items-center gap-2 flex-wrap">
-                <span>Ant: {totales.antPP.toLocaleString('es-PE')} u</span>
-                {totales.actualPP > 0 && (
-                  <span className="text-[#48BB78]">
-                    · Actual: +{totales.actualPP.toLocaleString('es-PE')} u
-                  </span>
-                )}
-                {totales.mermaAcumPP > 0 && (
-                  <span className="text-[#FC8181]">
-                    · -{totales.mermaAcumPP.toLocaleString('es-PE')} merma
-                  </span>
-                )}
-              </div>
-
-              <div className="text-[10px] text-[#718096] pt-0.5">
-                Contabilizado por separado (pliegos / semielaborados)
-              </div>
-            </div>
-
             {/* Sin clasificar */}
             {totales.acumSinTipo > 0 && (
               <div className="bg-[#1A202C] border border-[#4A5568] rounded-xl px-3 py-2.5 space-y-1">
@@ -251,6 +220,67 @@ export const HistorialOpModal: React.FC<HistorialOpModalProps> = ({ op, onClose 
                     </span>
                   )}
                 </div>
+              </div>
+            )}
+          </div>
+
+          {/* PP - Producto en Proceso separado por máquinas en cuadros pequeños */}
+          <div className="bg-[#1A202C] border border-[#F2A93B]/30 rounded-xl px-3 py-2.5 space-y-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#F2A93B]/20 text-[#F6AD55] font-['IBM_Plex_Mono',monospace]">
+                  PP
+                </span>
+                <span className="text-[10.5px] uppercase tracking-wider text-[#CBD5E0] font-semibold">
+                  Producto en Proceso por Máquina
+                </span>
+              </div>
+              <span className="text-[10px] text-[#A0AEC0]">
+                {ppPorMaquina.length > 0
+                  ? `${ppPorMaquina.length} máquina(s) independientes`
+                  : 'Sin registros PP'}
+              </span>
+            </div>
+
+            {ppPorMaquina.length === 0 ? (
+              <div className="text-[11px] text-[#718096]">
+                No hay producción registrada en PP para esta OP.
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {ppPorMaquina.map((mq) => (
+                  <div
+                    key={mq.key}
+                    className="bg-[#12161F] border border-[#F2A93B]/30 rounded-lg px-2.5 py-1.5 space-y-0.5"
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-[10.5px] font-bold text-white truncate font-['IBM_Plex_Mono',monospace]">
+                        {mq.maquina}
+                      </span>
+                      {mq.codigoMaquina && (
+                        <span className="text-[9px] px-1 rounded bg-[#232A38] text-[#A0AEC0] font-['IBM_Plex_Mono',monospace] shrink-0">
+                          {mq.codigoMaquina}
+                        </span>
+                      )}
+                    </div>
+                    <div className="font-['IBM_Plex_Mono',monospace] text-sm font-bold text-[#F2A93B] tabular-nums">
+                      {mq.totalAcumulado.toLocaleString('es-PE')} u
+                    </div>
+                    <div className="text-[9.5px] text-[#A0AEC0] font-['IBM_Plex_Mono',monospace] flex items-center gap-1 flex-wrap">
+                      <span>Ant: {mq.totalAnterior.toLocaleString('es-PE')}</span>
+                      {mq.totalActual > 0 && (
+                        <span className="text-[#48BB78]">
+                          · Act: +{mq.totalActual.toLocaleString('es-PE')}
+                        </span>
+                      )}
+                      {mq.mermaAcumulada > 0 && (
+                        <span className="text-[#FC8181]">
+                          · -{mq.mermaAcumulada.toLocaleString('es-PE')} m
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -319,11 +349,14 @@ export const HistorialOpModal: React.FC<HistorialOpModalProps> = ({ op, onClose 
                           PT: +{t.totalPT.toLocaleString('es-PE')} u
                         </span>
                       )}
-                      {(t.totalPP > 0 || t.filas.some((f) => f.tipoProducto === 'pp')) && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#F2A93B]/15 border border-[#F2A93B]/30 text-[#F6AD55] font-bold tabular-nums">
-                          PP: +{t.totalPP.toLocaleString('es-PE')} u
+                      {t.ppPorMaquina.map((pm, pIdx) => (
+                        <span
+                          key={pIdx}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#F2A93B]/15 border border-[#F2A93B]/30 text-[#F6AD55] font-bold tabular-nums"
+                        >
+                          PP ({pm.maquina}): +{pm.total.toLocaleString('es-PE')} u
                         </span>
-                      )}
+                      ))}
                       {t.totalSinTipo > 0 && (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#2D3748] text-[#CBD5E0] font-bold tabular-nums">
                           +{t.totalSinTipo.toLocaleString('es-PE')} u

@@ -9,7 +9,7 @@ interface ModeloResumenPdf {
   cantidadOrden: number;
   ptTotal: number;
   ptMerma: number;
-  ppTotal: number;
+  ppPorMaquina: Array<{ maquina: string; total: number }>;
   ppMerma: number;
   sinTipoTotal: number;
   sinTipoMerma: number;
@@ -34,7 +34,7 @@ function construirModelosResumen(
     cantidadOrden: number;
     ptTotal: number;
     ptMerma: number;
-    ppTotal: number;
+    ppMap: Map<string, { maquina: string; total: number }>;
     ppMerma: number;
     sinTipoTotal: number;
     sinTipoMerma: number;
@@ -54,7 +54,7 @@ function construirModelosResumen(
         cantidadOrden: Number(mo.cantidadTotal) || 0,
         ptTotal: 0,
         ptMerma: 0,
-        ppTotal: 0,
+        ppMap: new Map(),
         ppMerma: 0,
         sinTipoTotal: 0,
         sinTipoMerma: 0,
@@ -69,13 +69,11 @@ function construirModelosResumen(
     const prodClean = limpiarPliegoSufijo(productoRaw);
     const prodLower = prodClean.toLowerCase();
 
-    // Match por SAP exacto si existe
     if (sapClean) {
       const bySap = lista.find((m) => m.sap && m.sap.toLowerCase() === sapClean);
       if (bySap) return bySap;
     }
 
-    // Match por descripción o nombre corto del modelo
     if (prodLower) {
       const byExact = lista.find(
         (m) =>
@@ -92,12 +90,10 @@ function construirModelosResumen(
       if (byPartial) return byPartial;
     }
 
-    // Si el catálogo solo tiene 1 modelo y el registro vino sin producto especificado
     if (lista.length === 1 && !prodLower) {
       return lista[0];
     }
 
-    // Crear entrada nueva para variante no listada en catálogo
     const nuevoNombre = prodClean || 'Sin modelo especificado';
     const existente = lista.find(
       (m) => m.nombre.toLowerCase() === nuevoNombre.toLowerCase() && m.sap.toLowerCase() === sapClean
@@ -111,7 +107,7 @@ function construirModelosResumen(
       cantidadOrden: catalogMatch && lista.length === 0 ? Number(catalogMatch.cantidadTotal) || 0 : 0,
       ptTotal: 0,
       ptMerma: 0,
-      ppTotal: 0,
+      ppMap: new Map(),
       ppMerma: 0,
       sinTipoTotal: 0,
       sinTipoMerma: 0,
@@ -131,7 +127,11 @@ function construirModelosResumen(
     t.filas.forEach((f) => {
       const dest = buscarOCrearDestino(f.producto, f.sap);
       if (f.tipoProducto === 'pp') {
-        dest.ppTotal += f.total;
+        const mKey = (f.maquina || 'Sin máquina').trim().toLowerCase();
+        if (!dest.ppMap.has(mKey)) {
+          dest.ppMap.set(mKey, { maquina: f.maquina || 'Sin máquina', total: 0 });
+        }
+        dest.ppMap.get(mKey)!.total += f.total;
         dest.ppMerma += f.merma;
       } else if (f.tipoProducto === 'pt') {
         dest.ptTotal += f.total;
@@ -151,7 +151,7 @@ function construirModelosResumen(
     cantidadOrden: m.cantidadOrden,
     ptTotal: m.ptTotal,
     ptMerma: m.ptMerma,
-    ppTotal: m.ppTotal,
+    ppPorMaquina: Array.from(m.ppMap.values()),
     ppMerma: m.ppMerma,
     sinTipoTotal: m.sinTipoTotal,
     sinTipoMerma: m.sinTipoMerma,
@@ -173,6 +173,7 @@ export function exportarPdfReporteOp(params: {
   todosLosTurnos.push(...turnosAnteriores);
 
   const modelos = construirModelosResumen(catalogMatch, todosLosTurnos);
+  const ppMaquinas = porMaquina.filter((m) => m.tipoProducto === 'pp');
 
   const doc = new jsPDF({
     orientation: 'landscape',
@@ -227,7 +228,7 @@ export function exportarPdfReporteOp(params: {
   doc.setFontSize(9.5);
   doc.setTextColor(242, 169, 59);
   doc.text(
-    `PT: ${totales.acumPT.toLocaleString('es-PE')} u   |   PP: ${totales.acumPP.toLocaleString('es-PE')} u`,
+    `PT: ${totales.acumPT.toLocaleString('es-PE')} u   |   PP: ${ppMaquinas.length} máquina(s)`,
     marginX + contentWidth - 4,
     y + 7.2,
     { align: 'right' }
@@ -245,93 +246,135 @@ export function exportarPdfReporteOp(params: {
 
   y += 21.5;
 
-  // ================= 2. KPI SUMMARY CARDS (PT & PP) =================
-  const cardGap = 5;
-  const cardW = (contentWidth - cardGap) / 2;
-  const cardH = 22;
+  // ================= 2. KPI SUMMARY: PT CARD + PP SMALL CARDS BY MACHINE =================
+  const ptCardH = 18.5;
 
-  // PT Card
+  // PT Card (mantiene la lógica acumulada)
   doc.setFillColor(239, 246, 255);
   doc.setDrawColor(147, 197, 253);
   doc.setLineWidth(0.3);
-  doc.rect(marginX, y, cardW, cardH, 'FD');
+  doc.rect(marginX, y, contentWidth, ptCardH, 'FD');
   doc.setFillColor(37, 99, 235);
-  doc.rect(marginX, y, 2.2, cardH, 'F');
+  doc.rect(marginX, y, 2.4, ptCardH, 'F');
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
+  doc.setFontSize(8.2);
   doc.setTextColor(30, 64, 175);
-  doc.text('PT — PRODUCTO TERMINADO', marginX + 5, y + 5.2);
+  doc.text('PT — PRODUCTO TERMINADO (TOTAL ACUMULADO)', marginX + 5.5, y + 5.0);
 
   const pctPT = cantidadOrden > 0 ? (totales.acumPT / cantidadOrden) * 100 : 0;
   if (cantidadOrden > 0) {
-    doc.text(`${pctPT.toFixed(1)}% de orden`, marginX + cardW - 4, y + 5.2, { align: 'right' });
+    doc.text(`${pctPT.toFixed(1)}% de la orden`, marginX + contentWidth - 4, y + 5.0, { align: 'right' });
   }
 
-  doc.setFontSize(14);
+  doc.setFontSize(13.5);
   doc.setTextColor(17, 24, 39);
-  doc.text(`${totales.acumPT.toLocaleString('es-PE')} u`, marginX + 5, y + 12.2);
+  doc.text(`${totales.acumPT.toLocaleString('es-PE')} u`, marginX + 5.5, y + 11.4);
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
+  doc.setFontSize(7.6);
   doc.setTextColor(71, 85, 105);
   const ptSub = [
-    `Turnos ant.: ${totales.antPT.toLocaleString('es-PE')} u`,
+    `Turnos anteriores: ${totales.antPT.toLocaleString('es-PE')} u`,
     totales.actualPT > 0 ? `Turno actual: +${totales.actualPT.toLocaleString('es-PE')} u` : '',
     totales.mermaAcumPT > 0 ? `Merma: -${totales.mermaAcumPT.toLocaleString('es-PE')} u` : '',
   ]
     .filter(Boolean)
-    .join('  ·  ');
-  doc.text(ptSub, marginX + 5, y + 17.0);
+    .join('   ·   ');
+  doc.text(ptSub, marginX + 5.5, y + 15.8);
 
   if (cantidadOrden > 0) {
     const difPT = cantidadOrden - totales.acumPT;
     const difTxt =
       difPT > 0
-        ? `Faltan ${difPT.toLocaleString('es-PE')} u`
+        ? `Faltan ${difPT.toLocaleString('es-PE')} u para completar la orden`
         : difPT < 0
-        ? `+${Math.abs(difPT).toLocaleString('es-PE')} u extra`
-        : 'Orden completa';
+        ? `+${Math.abs(difPT).toLocaleString('es-PE')} u sobre la cantidad de orden`
+        : 'Orden completada al 100% en PT';
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(difPT <= 0 ? 21 : 30, difPT <= 0 ? 128 : 64, difPT <= 0 ? 61 : 175);
-    doc.text(difTxt, marginX + cardW - 4, y + 17.0, { align: 'right' });
+    doc.text(difTxt, marginX + contentWidth - 4, y + 15.8, { align: 'right' });
   }
 
-  // PP Card
-  const ppX = marginX + cardW + cardGap;
-  doc.setFillColor(255, 251, 235);
-  doc.setDrawColor(252, 211, 77);
-  doc.setLineWidth(0.3);
-  doc.rect(ppX, y, cardW, cardH, 'FD');
-  doc.setFillColor(217, 119, 6);
-  doc.rect(ppX, y, 2.2, cardH, 'F');
+  y += ptCardH + 3.5;
 
+  // PP Small Cards separated by machine (sin suma global)
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
+  doc.setFontSize(7.8);
   doc.setTextColor(180, 83, 9);
-  doc.text('PP — PRODUCTO EN PROCESO', ppX + 5, y + 5.2);
+  doc.text(
+    `PP — PRODUCTO EN PROCESO POR MÁQUINA (${ppMaquinas.length} máquina(s) · procesos independientes, no se suman entre sí)`,
+    marginX,
+    y + 3.2
+  );
+  y += 4.8;
 
-  doc.setFontSize(14);
-  doc.setTextColor(17, 24, 39);
-  doc.text(`${totales.acumPP.toLocaleString('es-PE')} u`, ppX + 5, y + 12.2);
+  if (ppMaquinas.length === 0) {
+    doc.setFillColor(255, 251, 235);
+    doc.setDrawColor(252, 211, 77);
+    doc.setLineWidth(0.25);
+    doc.rect(marginX, y, contentWidth, 8, 'FD');
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(120, 113, 108);
+    doc.text('No hay producción registrada en PP para esta OP.', marginX + 3.5, y + 5.2);
+    y += 11;
+  } else {
+    const ppCols = 4;
+    const ppGapX = 3;
+    const ppGapY = 2.8;
+    const ppCardW = (contentWidth - ppGapX * (ppCols - 1)) / ppCols; // ~66 mm each
+    const ppCardH = 16;
 
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  doc.setTextColor(71, 85, 105);
-  const ppSub = [
-    `Turnos ant.: ${totales.antPP.toLocaleString('es-PE')} u`,
-    totales.actualPP > 0 ? `Turno actual: +${totales.actualPP.toLocaleString('es-PE')} u` : '',
-    totales.mermaAcumPP > 0 ? `Merma: -${totales.mermaAcumPP.toLocaleString('es-PE')} u` : '',
-  ]
-    .filter(Boolean)
-    .join('  ·  ');
-  doc.text(ppSub, ppX + 5, y + 17.0);
+    for (let i = 0; i < ppMaquinas.length; i += ppCols) {
+      ensureSpace(ppCardH + 2);
+      const slice = ppMaquinas.slice(i, i + ppCols);
+      slice.forEach((mq, colIdx) => {
+        const cx = marginX + colIdx * (ppCardW + ppGapX);
+        doc.setFillColor(255, 251, 235);
+        doc.setDrawColor(252, 211, 77);
+        doc.setLineWidth(0.28);
+        doc.rect(cx, y, ppCardW, ppCardH, 'FD');
+        doc.setFillColor(217, 119, 6);
+        doc.rect(cx, y, 1.8, ppCardH, 'F');
 
-  doc.setFontSize(6.8);
-  doc.setTextColor(120, 113, 108);
-  doc.text('Contabilización independiente de proceso / pliegos', ppX + 5, y + 20.5);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7.2);
+        doc.setTextColor(17, 24, 39);
+        const maxTitleW = mq.codigoMaquina ? ppCardW - 18 : ppCardW - 6;
+        const titleLines = doc.splitTextToSize(mq.maquina, maxTitleW) as string[];
+        doc.text(titleLines[0] || mq.maquina, cx + 3.5, y + 4.4);
 
-  y += cardH + 4;
+        if (mq.codigoMaquina) {
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(6.3);
+          doc.setTextColor(146, 64, 14);
+          doc.text(mq.codigoMaquina, cx + ppCardW - 2.2, y + 4.4, { align: 'right' });
+        }
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(11);
+        doc.setTextColor(180, 83, 9);
+        doc.text(`${mq.totalAcumulado.toLocaleString('es-PE')} u`, cx + 3.5, y + 10.2);
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(6.4);
+        doc.setTextColor(71, 85, 105);
+        const subPartsPp = [
+          `Ant: ${mq.totalAnterior.toLocaleString('es-PE')}`,
+          mq.totalActual > 0 ? `Act: +${mq.totalActual.toLocaleString('es-PE')}` : '',
+          mq.mermaAcumulada > 0 ? `-${mq.mermaAcumulada.toLocaleString('es-PE')} m` : '',
+          `${mq.turnosCount} t.`,
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        const subLinesPp = doc.splitTextToSize(subPartsPp, ppCardW - 5.5) as string[];
+        doc.text(subLinesPp[0] || '', cx + 3.5, y + 14.0);
+      });
+      y += ppCardH + ppGapY;
+    }
+    y += 1.2;
+  }
 
   if (totales.acumSinTipo > 0) {
     doc.setFillColor(243, 244, 246);
@@ -363,14 +406,14 @@ export function exportarPdfReporteOp(params: {
 
   // ================= 3. INFORMACIÓN POR MODELOS =================
   if (modelos.length > 0) {
-    const modCols = [68, 21, 24, 23, 15, 23, 17, 40, 42]; // Sum = 273
+    const modCols = [62, 20, 22, 21, 14, 42, 16, 36, 40]; // Sum = 273
     const modHeaders = [
       'MODELO / PRODUCTO',
       'SAP',
       'CANT. ORDEN',
       'PROD. PT',
       '% PT',
-      'PROD. PP',
+      'PROD. PP (POR MÁQ.)',
       'MERMA',
       'MÁQUINAS',
       'FECHAS / TURNOS',
@@ -393,7 +436,7 @@ export function exportarPdfReporteOp(params: {
       doc.setDrawColor(183, 183, 183);
       doc.rect(marginX, y, contentWidth, 6, 'FD');
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(6.9);
+      doc.setFontSize(6.7);
       doc.setTextColor(51, 51, 51);
       modHeaders.forEach((h, i) => {
         doc.line(modColX[i], y, modColX[i], y + 6);
@@ -409,20 +452,32 @@ export function exportarPdfReporteOp(params: {
     modelos.forEach((mo, idx) => {
       const mermaTot = mo.ptMerma + mo.ppMerma + mo.sinTipoMerma;
       const pctMo = mo.cantidadOrden > 0 ? `${((mo.ptTotal / mo.cantidadOrden) * 100).toFixed(1)}%` : '—';
+      const ppTexto =
+        mo.ppPorMaquina.length > 0
+          ? mo.ppPorMaquina.map((p) => `${p.maquina}: ${p.total.toLocaleString('es-PE')} u`).join('\n')
+          : '—';
+
       const vals = [
         mo.nombre,
         mo.sap || '—',
         mo.cantidadOrden > 0 ? `${mo.cantidadOrden.toLocaleString('es-PE')}` : '—',
         `${mo.ptTotal.toLocaleString('es-PE')}`,
         pctMo,
-        `${mo.ppTotal.toLocaleString('es-PE')}`,
+        ppTexto,
         mermaTot > 0 ? `${mermaTot.toLocaleString('es-PE')}` : '0',
         mo.maquinas.length > 0 ? mo.maquinas.join(', ') : 'Sin registros',
         mo.turnosTexto || '—',
       ];
 
-      doc.setFontSize(6.9);
-      const wrapped = vals.map((v, cIdx) => doc.splitTextToSize(v, modCols[cIdx] - 2.4) as string[]);
+      doc.setFontSize(6.8);
+      const wrapped = vals.map((v, cIdx) => {
+        if (cIdx === 5 && v.includes('\n')) {
+          return v
+            .split('\n')
+            .flatMap((part) => doc.splitTextToSize(part, modCols[cIdx] - 2.4) as string[]);
+        }
+        return doc.splitTextToSize(v, modCols[cIdx] - 2.4) as string[];
+      });
       const maxLines = Math.max(...wrapped.map((l) => l.length), 1);
       const rowH = Math.max(5.5, maxLines * 3.1 + 2.2);
 
@@ -439,11 +494,14 @@ export function exportarPdfReporteOp(params: {
       modColX.forEach((cx) => doc.line(cx, y, cx, y + rowH));
 
       wrapped.forEach((lines, cIdx) => {
-        if (cIdx === 0 || cIdx === 3 || cIdx === 5) doc.setFont('helvetica', 'bold');
-        else doc.setFont('helvetica', 'normal');
+        if (cIdx === 0 || cIdx === 3 || (cIdx === 5 && mo.ppPorMaquina.length > 0)) {
+          doc.setFont('helvetica', 'bold');
+        } else {
+          doc.setFont('helvetica', 'normal');
+        }
 
         if (cIdx === 3 && mo.ptTotal > 0) doc.setTextColor(30, 64, 175);
-        else if (cIdx === 5 && mo.ppTotal > 0) doc.setTextColor(180, 83, 9);
+        else if (cIdx === 5 && mo.ppPorMaquina.length > 0) doc.setTextColor(180, 83, 9);
         else if (cIdx === 6 && mermaTot > 0) doc.setTextColor(192, 57, 43);
         else doc.setTextColor(17, 24, 39);
 
@@ -451,7 +509,7 @@ export function exportarPdfReporteOp(params: {
         lines.forEach((line) => {
           if (cIdx === 1 || cIdx === 4) {
             doc.text(line, modColX[cIdx] + modCols[cIdx] / 2, ty, { align: 'center' });
-          } else if (cIdx === 2 || cIdx === 3 || cIdx === 5 || cIdx === 6) {
+          } else if (cIdx === 2 || cIdx === 3 || cIdx === 6) {
             doc.text(line, modColX[cIdx] + modCols[cIdx] - 1.5, ty, { align: 'right' });
           } else {
             doc.text(line, modColX[cIdx] + 1.3, ty);
@@ -558,7 +616,7 @@ export function exportarPdfReporteOp(params: {
       y += rowH;
     });
 
-    // Subtotals separated by PT and PP
+    // Subtotal únicamente para PT (los procesos PP no se suman entre máquinas)
     const subtotalRows: { label: string; ant: number; act: number; acum: number; merma: number; color: [number, number, number] }[] = [];
     if (totales.acumPT > 0 || porMaquina.some((m) => m.tipoProducto === 'pt')) {
       subtotalRows.push({
@@ -568,16 +626,6 @@ export function exportarPdfReporteOp(params: {
         acum: totales.acumPT,
         merma: totales.mermaAcumPT,
         color: [219, 234, 254],
-      });
-    }
-    if (totales.acumPP > 0 || porMaquina.some((m) => m.tipoProducto === 'pp')) {
-      subtotalRows.push({
-        label: 'TOTAL PP (PRODUCTO EN PROCESO)',
-        ant: totales.antPP,
-        act: totales.actualPP,
-        acum: totales.acumPP,
-        merma: totales.mermaAcumPP,
-        color: [253, 235, 208],
       });
     }
 
@@ -751,9 +799,9 @@ export function exportarPdfReporteOp(params: {
       if (t.totalPT > 0 || t.filas.some((f) => f.tipoProducto === 'pt')) {
         partsShift.push(`PT: ${t.totalPT.toLocaleString('es-PE')} u`);
       }
-      if (t.totalPP > 0 || t.filas.some((f) => f.tipoProducto === 'pp')) {
-        partsShift.push(`PP: ${t.totalPP.toLocaleString('es-PE')} u`);
-      }
+      t.ppPorMaquina.forEach((pm) => {
+        partsShift.push(`PP (${pm.maquina}): ${pm.total.toLocaleString('es-PE')} u`);
+      });
       if (t.totalSinTipo > 0) {
         partsShift.push(`S/T: ${t.totalSinTipo.toLocaleString('es-PE')} u`);
       }

@@ -8,6 +8,7 @@ import {
   TurnoMaquina,
 } from '../types';
 import { getSupabaseConfig, sbFetch } from './supabase';
+import { buscarEnCatalogo } from './excel';
 
 export interface MaquinaRegistroOp {
   maquina: string;
@@ -444,14 +445,35 @@ export interface TurnoMaquinaResumen {
   key: string;
   fecha: string;
   tipo: string;
-  fuente: 'nube' | 'local';
+  fuente: 'nube' | 'local' | 'actual';
   totalProducido: number;
   totalMerma: number;
   filas: MaquinaTurnoFila[];
 }
 
+export interface MaquinaOpConsolidado {
+  key: string;
+  op: string;
+  sap: string;
+  producto: string;
+  cliente: string;
+  totalAnterior: number;
+  mermaAnterior: number;
+  totalActual: number;
+  mermaActual: number;
+  totalAcumulado: number;
+  mermaAcumulada: number;
+  turnosCount: number;
+}
+
 export interface ConsultaMaquinaResultado {
   turnosAnteriores: TurnoMaquinaResumen[];
+  turnoActualResumen: TurnoMaquinaResumen | null;
+  porOp: MaquinaOpConsolidado[];
+  totalAnterior: number;
+  mermaAnterior: number;
+  totalActual: number;
+  mermaActual: number;
   totalProducido: number;
   totalMerma: number;
   promedioPorTurno: number;
@@ -474,13 +496,25 @@ function maquinaCoincide(
   return false;
 }
 
+function fechaEnRango(fecha: string, desde?: string, hasta?: string): boolean {
+  const f = (fecha || '').trim();
+  if (!f) return false;
+  if (desde && f < desde) return false;
+  if (hasta && f > hasta) return false;
+  return true;
+}
+
 export async function consultarHistorialMaquina(params: {
   maquina: Maquina;
   historial: HistorialTurnoLocal[];
   metaTurno: MetaTurno;
   session: SupabaseSession | null;
+  turno?: TurnoMaquina[];
+  catalogo?: CatalogoItem[];
+  fechaDesde?: string;
+  fechaHasta?: string;
 }): Promise<ConsultaMaquinaResultado> {
-  const { maquina, historial, metaTurno, session } = params;
+  const { maquina, historial, metaTurno, session, turno, catalogo = [], fechaDesde, fechaHasta } = params;
 
   let dbRows: TurnoDBRow[] = [];
   let nubeDisponible = false;
@@ -489,12 +523,10 @@ export async function consultarHistorialMaquina(params: {
   const cfg = getSupabaseConfig(false);
   if (cfg) {
     try {
-      const res = await sbFetch<TurnoDBRow[]>(
-        cfg,
-        'turnos?select=fecha,tipo,filas&order=fecha.desc,tipo.asc&limit=500',
-        undefined,
-        session
-      );
+      let q = 'turnos?select=fecha,tipo,filas&order=fecha.desc,tipo.asc&limit=500';
+      if (fechaDesde) q += `&fecha=gte.${encodeURIComponent(fechaDesde)}`;
+      if (fechaHasta) q += `&fecha=lte.${encodeURIComponent(fechaHasta)}`;
+      const res = await sbFetch<TurnoDBRow[]>(cfg, q, undefined, session);
       if (Array.isArray(res)) {
         dbRows = res;
         nubeDisponible = true;
@@ -503,7 +535,7 @@ export async function consultarHistorialMaquina(params: {
       nubeDisponible = false;
       nubeMensaje = session
         ? 'No se pudo consultar la base de datos en la nube. Mostrando registros locales.'
-        : 'Inicia sesión en la pestaña Historial para consultar también los turnos guardados en la nube.';
+        : 'Inicia sesión en "Turnos Guardados" para consultar también los turnos guardados en la nube.';
     }
   } else {
     nubeMensaje = 'Mostrando solo registros guardados en este dispositivo.';
@@ -517,6 +549,7 @@ export async function consultarHistorialMaquina(params: {
   dbRows.forEach((rec) => {
     const fFecha = (rec.fecha || '').trim();
     const fTipo = (rec.tipo || '').trim().toLowerCase();
+    if (!fechaEnRango(fFecha, fechaDesde, fechaHasta)) return;
     if (currentFecha && currentTipo && fFecha === currentFecha && fTipo === currentTipo) {
       return;
     }
@@ -549,7 +582,7 @@ export async function consultarHistorialMaquina(params: {
   (historial || []).forEach((h) => {
     const fFecha = (h.fechaTurno || (h.fecha ? h.fecha.slice(0, 10) : '')).trim();
     const fTipo = (h.tipoTurno || '').trim().toLowerCase();
-    if (!fFecha) return;
+    if (!fechaEnRango(fFecha, fechaDesde, fechaHasta)) return;
     if (currentFecha && currentTipo && fFecha === currentFecha && fTipo === currentTipo) {
       return;
     }
@@ -587,13 +620,120 @@ export async function consultarHistorialMaquina(params: {
     return pesoTipo(b.tipo) - pesoTipo(a.tipo);
   });
 
-  const totalProducido = turnosAnteriores.reduce((s, t) => s + t.totalProducido, 0);
-  const totalMerma = turnosAnteriores.reduce((s, t) => s + t.totalMerma, 0);
-  const promedioPorTurno =
-    turnosAnteriores.length > 0 ? Math.round(totalProducido / turnosAnteriores.length) : 0;
+  // 3. Procesar turno activo actual si se pasó `turno`
+  let turnoActualResumen: TurnoMaquinaResumen | null = null;
+  const activeFecha = currentFecha || new Date().toISOString().slice(0, 10);
+  if (turno && fechaEnRango(activeFecha, fechaDesde, fechaHasta)) {
+    const gruposActual = new Map<string, MaquinaTurnoFila>();
+    turno
+      .filter((t) => t.maquinaId === maquina.id)
+      .forEach((t) => {
+        (t.registros || []).forEach((r) => {
+          const cant = Number(r.cantidad) || 0;
+          const merma = Number(r.merma) || 0;
+          if (cant <= 0 && merma <= 0) return;
+          const opVal = (r.op || t.op || '').trim();
+          const sapVal = (r.sap || '').trim();
+          const prodVal = (r.descripcion || '').trim();
+          const gKey = `${opVal.toLowerCase()}||${sapVal.toLowerCase()}||${prodVal.toLowerCase()}`;
+          if (!gruposActual.has(gKey)) {
+            gruposActual.set(gKey, {
+              op: opVal,
+              sap: sapVal,
+              producto: prodVal,
+              total: 0,
+              merma: 0,
+              observaciones: t.observaciones || '',
+            });
+          }
+          const g = gruposActual.get(gKey)!;
+          g.total += cant;
+          g.merma += merma;
+        });
+      });
+
+    const filasActuales = Array.from(gruposActual.values());
+    if (filasActuales.length > 0) {
+      turnoActualResumen = {
+        key: `actual|${activeFecha}|${currentTipo || 'dia'}`,
+        fecha: activeFecha,
+        tipo: currentTipo || 'dia',
+        fuente: 'actual',
+        totalProducido: filasActuales.reduce((s, r) => s + r.total, 0),
+        totalMerma: filasActuales.reduce((s, r) => s + r.merma, 0),
+        filas: filasActuales,
+      };
+    }
+  }
+
+  // 4. Consolidar por OP / SAP / Producto
+  const opMap = new Map<string, MaquinaOpConsolidado & { _turnosSet: Set<string> }>();
+
+  const acumularPorOp = (t: TurnoMaquinaResumen, esActual: boolean) => {
+    t.filas.forEach((f) => {
+      const opKey = (f.op || '').trim();
+      const sapKey = (f.sap || '').trim();
+      const prodKey = (f.producto || '').trim();
+      const mapKey = `${opKey.toLowerCase()}||${sapKey.toLowerCase()}||${prodKey.toLowerCase()}`;
+
+      if (!opMap.has(mapKey)) {
+        const cat = opKey ? buscarEnCatalogo(catalogo, opKey) : null;
+        opMap.set(mapKey, {
+          key: mapKey,
+          op: opKey,
+          sap: sapKey,
+          producto: prodKey || cat?.descripcionBase || cat?.descripcion || '',
+          cliente: cat?.cliente || '',
+          totalAnterior: 0,
+          mermaAnterior: 0,
+          totalActual: 0,
+          mermaActual: 0,
+          totalAcumulado: 0,
+          mermaAcumulada: 0,
+          turnosCount: 0,
+          _turnosSet: new Set<string>(),
+        });
+      }
+
+      const entry = opMap.get(mapKey)!;
+      if (esActual) {
+        entry.totalActual += f.total;
+        entry.mermaActual += f.merma;
+      } else {
+        entry.totalAnterior += f.total;
+        entry.mermaAnterior += f.merma;
+      }
+      entry.totalAcumulado = entry.totalAnterior + entry.totalActual;
+      entry.mermaAcumulada = entry.mermaAnterior + entry.mermaActual;
+      entry._turnosSet.add(t.key);
+      entry.turnosCount = entry._turnosSet.size;
+    });
+  };
+
+  turnosAnteriores.forEach((t) => acumularPorOp(t, false));
+  if (turnoActualResumen) acumularPorOp(turnoActualResumen, true);
+
+  const porOp: MaquinaOpConsolidado[] = Array.from(opMap.values())
+    .map(({ _turnosSet, ...rest }) => rest)
+    .sort((a, b) => b.totalAcumulado - a.totalAcumulado);
+
+  const totalAnterior = turnosAnteriores.reduce((s, t) => s + t.totalProducido, 0);
+  const mermaAnterior = turnosAnteriores.reduce((s, t) => s + t.totalMerma, 0);
+  const totalActual = turnoActualResumen?.totalProducido || 0;
+  const mermaActual = turnoActualResumen?.totalMerma || 0;
+  const totalProducido = totalAnterior + totalActual;
+  const totalMerma = mermaAnterior + mermaActual;
+  const totalTurnos = turnosAnteriores.length + (turnoActualResumen ? 1 : 0);
+  const promedioPorTurno = totalTurnos > 0 ? Math.round(totalProducido / totalTurnos) : 0;
 
   return {
     turnosAnteriores,
+    turnoActualResumen,
+    porOp,
+    totalAnterior,
+    mermaAnterior,
+    totalActual,
+    mermaActual,
     totalProducido,
     totalMerma,
     promedioPorTurno,

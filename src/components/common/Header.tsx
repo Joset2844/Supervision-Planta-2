@@ -140,12 +140,12 @@ export const Header: React.FC = () => {
 
       {/* Subtabs for Historial (Visible on both Mobile and Desktop when Historial is active) */}
       {activeTab === 'historialdb' && (
-        <div className="max-w-[1440px] mx-auto px-3.5 sm:px-5 lg:px-8 pb-2 pt-0 flex items-center gap-2">
-          <div className="inline-flex p-1 bg-[#12161F] rounded-xl border border-[#2D3748]">
+        <div className="max-w-[1440px] mx-auto px-3.5 sm:px-5 lg:px-8 pb-2 pt-0 flex items-center gap-2 overflow-x-auto">
+          <div className="inline-flex p-1 bg-[#12161F] rounded-xl border border-[#2D3748] shrink-0">
             <button
               type="button"
               onClick={() => setSubTabHistorial('turnos')}
-              className={`flex items-center gap-1.5 py-1.5 px-3.5 rounded-lg text-xs font-['Oswald',sans-serif] tracking-wider uppercase transition-all cursor-pointer min-h-[36px] ${
+              className={`flex items-center gap-1.5 py-1.5 px-3 sm:px-3.5 rounded-lg text-xs font-['Oswald',sans-serif] tracking-wider uppercase transition-all cursor-pointer min-h-[36px] whitespace-nowrap ${
                 subTabHistorial === 'turnos'
                   ? 'bg-[#F2A93B] text-[#12161F] font-bold shadow-sm'
                   : 'text-[#A0AEC0] hover:text-white'
@@ -157,7 +157,7 @@ export const Header: React.FC = () => {
             <button
               type="button"
               onClick={() => setSubTabHistorial('buscar_op')}
-              className={`flex items-center gap-1.5 py-1.5 px-3.5 rounded-lg text-xs font-['Oswald',sans-serif] tracking-wider uppercase transition-all cursor-pointer min-h-[36px] ${
+              className={`flex items-center gap-1.5 py-1.5 px-3 sm:px-3.5 rounded-lg text-xs font-['Oswald',sans-serif] tracking-wider uppercase transition-all cursor-pointer min-h-[36px] whitespace-nowrap ${
                 subTabHistorial === 'buscar_op'
                   ? 'bg-[#F2A93B] text-[#12161F] font-bold shadow-sm'
                   : 'text-[#A0AEC0] hover:text-white'
@@ -165,6 +165,18 @@ export const Header: React.FC = () => {
             >
               <Search size={14} />
               <span>Consultar por OP</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSubTabHistorial('buscar_maquina')}
+              className={`flex items-center gap-1.5 py-1.5 px-3 sm:px-3.5 rounded-lg text-xs font-['Oswald',sans-serif] tracking-wider uppercase transition-all cursor-pointer min-h-[36px] whitespace-nowrap ${
+                subTabHistorial === 'buscar_maquina'
+                  ? 'bg-[#F2A93B] text-[#12161F] font-bold shadow-sm'
+                  : 'text-[#A0AEC0] hover:text-white'
+              }`}
+            >
+              <Cpu size={14} />
+              <span>Consultar por Máquina</span>
             </button>
           </div>
         </div>

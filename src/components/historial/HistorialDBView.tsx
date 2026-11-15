@@ -39,6 +39,7 @@ import {
 import { exportarPdfEficienciaVasosDesdeFilas } from '../../services/pdfEficiencia';
 import { TurnoDBRow, FilaTurnoExcel } from '../../types';
 import { HistorialOpTab } from './HistorialOpTab';
+import { HistorialMaquinaTab } from './HistorialMaquinaTab';
 
 export const HistorialDBView: React.FC = () => {
   const { session, setSession, showToast, catalogo, maquinas, subTabHistorial } = useApp();
@@ -637,9 +638,12 @@ export const HistorialDBView: React.FC = () => {
     }
   };
 
-  // Consult OP sub-tab (matching Inventario subtabs behavior)
+  // Consult OP / Machine sub-tabs (matching Inventario subtabs behavior)
   if (subTabHistorial === 'buscar_op') {
     return <HistorialOpTab />;
+  }
+  if (subTabHistorial === 'buscar_maquina') {
+    return <HistorialMaquinaTab />;
   }
 
   // If not logged in: strictly login-only (account creation is hidden from public view and restricted to Admin)

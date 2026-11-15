@@ -878,7 +878,7 @@ export function imprimirTurnoFormatoExcel(
   <style>
     @page {
       size: A4 landscape;
-      margin: 8mm;
+      margin: 5mm;
     }
     * {
       box-sizing: border-box;
@@ -888,40 +888,62 @@ export function imprimirTurnoFormatoExcel(
     html, body {
       margin: 0;
       padding: 0;
+      width: 285mm;
+      max-width: 285mm;
+      background: #ffffff;
       font-family: Arial, Helvetica, sans-serif;
       color: #111827;
-      font-size: 10px;
-      background: #ffffff;
+      font-size: 9.5px;
+    }
+    @media print {
+      html, body {
+        width: 285mm;
+        height: auto;
+        max-height: 192mm;
+        overflow: hidden !important;
+      }
+    }
+    #print-viewport {
+      width: 285mm;
+      overflow: hidden;
+      page-break-inside: avoid;
+      break-inside: avoid;
+      page-break-after: avoid;
+      break-after: avoid;
+    }
+    #sheet-content {
+      width: 285mm;
+      transform-origin: top left;
     }
     .title-banner {
       background: #12161F;
       color: #FFFFFF;
-      padding: 8px 12px;
+      padding: 6px 10px;
       display: flex;
       justify-content: space-between;
       align-items: center;
       border-bottom: 3px solid #F2A93B;
-      margin-bottom: 8px;
+      margin-bottom: 6px;
     }
     .title-main {
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 700;
       letter-spacing: 0.4px;
       text-transform: uppercase;
     }
     .title-sub {
-      font-size: 10px;
+      font-size: 9px;
       color: #CBD5E0;
-      margin-top: 2px;
+      margin-top: 1px;
     }
     .title-stats {
       text-align: right;
-      font-size: 10.5px;
+      font-size: 10px;
       white-space: nowrap;
     }
     .title-stats strong {
       color: #F2A93B;
-      font-size: 12px;
+      font-size: 11px;
     }
     .title-stats .merma-badge {
       color: #FC8181;
@@ -929,43 +951,36 @@ export function imprimirTurnoFormatoExcel(
       margin-left: 8px;
     }
     .area-block {
-      margin-bottom: 10px;
-      page-break-inside: auto;
+      margin-bottom: 6px;
     }
     .area-banner {
       background: #D97706;
       color: #FFFFFF;
       font-weight: 700;
-      font-size: 11px;
-      padding: 4px 8px;
+      font-size: 10px;
+      padding: 3px 7px;
       letter-spacing: 0.4px;
       border: 1px solid #B7B7B7;
       border-bottom: none;
-      page-break-after: avoid;
     }
     table {
       width: 100%;
       border-collapse: collapse;
       table-layout: fixed;
     }
-    thead {
-      display: table-header-group;
-    }
-    tr {
-      page-break-inside: avoid;
-    }
     th, td {
       border: 1px solid #B7B7B7;
-      padding: 3.5px 5px;
+      padding: 2.5px 4.5px;
       vertical-align: middle;
       word-wrap: break-word;
-      overflow-wrap: break-word;
+      overflow-wrap: anywhere;
+      line-height: 1.2;
     }
     th {
       background: #F2F2F2;
       color: #333333;
       font-weight: 700;
-      font-size: 9px;
+      font-size: 8.5px;
       text-align: center;
     }
     .maq-cell {
@@ -975,7 +990,7 @@ export function imprimirTurnoFormatoExcel(
     .cod-cell, .op-cell, .sap-cell {
       font-family: 'Courier New', Courier, monospace;
       text-align: center;
-      font-size: 9.5px;
+      font-size: 9px;
     }
     .prod-cell, .obs-cell {
       text-align: left;
@@ -991,16 +1006,16 @@ export function imprimirTurnoFormatoExcel(
     .total-row td {
       background: #FDEBD0;
       font-weight: 700;
-      font-size: 10px;
+      font-size: 9.5px;
     }
     .grand-total {
-      margin-top: 6px;
+      margin-top: 4px;
       background: #12161F;
       color: #FFFFFF;
-      padding: 6px 10px;
+      padding: 5px 9px;
       display: flex;
       justify-content: space-between;
-      font-size: 10.5px;
+      font-size: 10px;
       font-weight: 700;
       border-radius: 2px;
     }
@@ -1013,39 +1028,65 @@ export function imprimirTurnoFormatoExcel(
       font-family: 'Courier New', Courier, monospace;
       margin-left: 12px;
     }
+
+    /* Compact density tiers applied automatically before scaling when needed */
+    #sheet-content.compact .title-banner { padding: 4px 8px; margin-bottom: 4px; }
+    #sheet-content.compact .title-main { font-size: 12px; }
+    #sheet-content.compact .area-block { margin-bottom: 4px; }
+    #sheet-content.compact .area-banner { padding: 2px 6px; font-size: 9.5px; }
+    #sheet-content.compact th,
+    #sheet-content.compact td { padding: 1.8px 3.5px; font-size: 8.8px; line-height: 1.15; }
+    #sheet-content.compact th { font-size: 8px; }
+    #sheet-content.compact .grand-total { padding: 4px 8px; font-size: 9px; margin-top: 3px; }
+
+    #sheet-content.ultra-compact .title-banner { padding: 3px 7px; margin-bottom: 3px; }
+    #sheet-content.ultra-compact .title-main { font-size: 11px; }
+    #sheet-content.ultra-compact .area-block { margin-bottom: 3px; }
+    #sheet-content.ultra-compact .area-banner { padding: 1.5px 5px; font-size: 9px; }
+    #sheet-content.ultra-compact th,
+    #sheet-content.ultra-compact td { padding: 1.2px 3px; font-size: 8.2px; line-height: 1.12; }
+    #sheet-content.ultra-compact th { font-size: 7.6px; }
+    #sheet-content.ultra-compact .grand-total { padding: 3px 7px; font-size: 8.5px; margin-top: 2px; }
   </style>
 </head>
 <body>
-  <div class="title-banner">
-    <div>
-      <div class="title-main">${escapeHtml(titulo)}</div>
-      <div class="title-sub">${escapeHtml(subtitulo)}</div>
-    </div>
-    <div class="title-stats">
-      Total: <strong>${totalGen.toLocaleString('es-PE')} u</strong>
-      ${mermaGen > 0 ? `<span class="merma-badge">Merma: ${mermaGen.toLocaleString('es-PE')} u</span>` : ''}
-      <span style="color:#A0AEC0;margin-left:8px;">(${filas.length} filas)</span>
-    </div>
-  </div>
-  ${bloquesAreas}
-  <div class="grand-total">
-    <span>RESUMEN GENERAL DEL TURNO (${filas.length} REGISTROS)</span>
-    <div>
-      TOTAL PRODUCIDO: <span class="val">${totalGen.toLocaleString('es-PE')} u</span>
-      <span class="merma-val">MERMA TOTAL: ${mermaGen.toLocaleString('es-PE')} u</span>
+  <div id="mm-ruler" style="position:absolute;top:-9999px;left:0;width:100mm;height:100mm;visibility:hidden;pointer-events:none;"></div>
+  <div id="print-viewport">
+    <div id="sheet-content">
+      <div class="title-banner">
+        <div>
+          <div class="title-main">${escapeHtml(titulo)}</div>
+          <div class="title-sub">${escapeHtml(subtitulo)}</div>
+        </div>
+        <div class="title-stats">
+          Total: <strong>${totalGen.toLocaleString('es-PE')} u</strong>
+          ${mermaGen > 0 ? `<span class="merma-badge">Merma: ${mermaGen.toLocaleString('es-PE')} u</span>` : ''}
+          <span style="color:#A0AEC0;margin-left:8px;">(${filas.length} filas)</span>
+        </div>
+      </div>
+      ${bloquesAreas}
+      <div class="grand-total">
+        <span>RESUMEN GENERAL DEL TURNO (${filas.length} REGISTROS)</span>
+        <div>
+          TOTAL PRODUCIDO: <span class="val">${totalGen.toLocaleString('es-PE')} u</span>
+          <span class="merma-val">MERMA TOTAL: ${mermaGen.toLocaleString('es-PE')} u</span>
+        </div>
+      </div>
     </div>
   </div>
 </body>
 </html>`;
 
-  // Print via hidden iframe to avoid popup blockers while preserving exact A4 landscape @page layout
+  // Render inside an off-screen A4-sized iframe so DOM height is accurately measured and scaled to 1 page
   const iframe = document.createElement('iframe');
   iframe.style.position = 'fixed';
-  iframe.style.right = '0';
-  iframe.style.bottom = '0';
-  iframe.style.width = '0';
-  iframe.style.height = '0';
+  iframe.style.left = '-12000px';
+  iframe.style.top = '0';
+  iframe.style.width = '1200px';
+  iframe.style.height = '900px';
   iframe.style.border = '0';
+  iframe.style.opacity = '0';
+  iframe.style.pointerEvents = 'none';
   iframe.setAttribute('aria-hidden', 'true');
   document.body.appendChild(iframe);
 
@@ -1059,6 +1100,61 @@ export function imprimirTurnoFormatoExcel(
   doc.write(html);
   doc.close();
 
+  const fitSingleLandscapePage = () => {
+    const ruler = doc.getElementById('mm-ruler');
+    const viewport = doc.getElementById('print-viewport');
+    const content = doc.getElementById('sheet-content');
+    if (!ruler || !viewport || !content) return;
+
+    const rulerRect = ruler.getBoundingClientRect();
+    const pxPerMm = rulerRect.height > 0 ? rulerRect.height / 100 : 3.7795275591;
+    const widthMm = 285;
+    const maxHeightMm = 190; // Safe single-page budget inside 210mm A4 height with 5mm top/bottom margins
+    const maxH = maxHeightMm * pxPerMm;
+
+    content.style.width = `${widthMm}mm`;
+
+    // 1) Try compact density tiers before applying geometric transform scaling
+    if (content.scrollHeight > maxH) {
+      content.classList.add('compact');
+    }
+    if (content.scrollHeight > maxH * 1.18) {
+      content.classList.add('ultra-compact');
+    }
+
+    // 2) If content still exceeds single-page height, solve optimal scale via binary search:
+    // widening virtual width to (285 / scale)mm prevents narrow wrapping while uniform scale keeps full width & <=190mm height
+    let bestScale = 1;
+    if (content.scrollHeight > maxH) {
+      let low = 0.25;
+      let high = 1.0;
+      bestScale = 0.25;
+
+      for (let step = 0; step < 14; step++) {
+        const mid = (low + high) / 2;
+        content.style.width = `${(widthMm / mid).toFixed(3)}mm`;
+        const h = content.scrollHeight;
+        if (h * mid <= maxH * 0.985) {
+          bestScale = mid;
+          low = mid;
+        } else {
+          high = mid;
+        }
+      }
+
+      content.style.width = `${(widthMm / bestScale).toFixed(3)}mm`;
+      content.style.transform = `scale(${bestScale.toFixed(5)})`;
+      content.style.transformOrigin = 'top left';
+    }
+
+    const scaledHeightMm = Math.min(maxHeightMm, (content.scrollHeight / pxPerMm) * bestScale + 0.5);
+    viewport.style.width = `${widthMm}mm`;
+    viewport.style.height = `${scaledHeightMm.toFixed(2)}mm`;
+    viewport.style.overflow = 'hidden';
+
+    ruler.remove();
+  };
+
   const cleanup = () => {
     if (iframe.parentNode) {
       iframe.parentNode.removeChild(iframe);
@@ -1068,12 +1164,13 @@ export function imprimirTurnoFormatoExcel(
   iframe.contentWindow.addEventListener('afterprint', cleanup, { once: true });
   setTimeout(() => {
     try {
+      fitSingleLandscapePage();
       iframe.contentWindow?.focus();
       iframe.contentWindow?.print();
     } finally {
       setTimeout(cleanup, 60000);
     }
-  }, 200);
+  }, 180);
 }
 
 // ----------------- ACTIVACION EXCEL & PDF -----------------

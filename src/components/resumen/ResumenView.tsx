@@ -202,7 +202,7 @@ export const ResumenView: React.FC = () => {
     const tipo = metaTurno.tipo ? etiquetaTurno(metaTurno.tipo) : '';
     const nombre = `activacion_${metaTurno.fecha || 'sin-fecha'}_${metaTurno.tipo || 'sin-turno'}`;
     imprimirActivacion(filasAct, fecha, tipo, nombre);
-    showToast('ok', `PDF de activación descargado (Horizontal A4): ${nombre}.pdf`);
+    showToast('ok', `PDF de activación descargado: ${nombre}.pdf`);
   };
 
   return (
@@ -280,7 +280,7 @@ export const ResumenView: React.FC = () => {
               type="button"
               onClick={handleActivacionPdf}
               className="flex items-center gap-1 bg-[#232A38] text-[#CBD5E0] border border-[#4A5568] hover:text-white py-1.5 px-2.5 rounded-lg text-xs font-semibold cursor-pointer active:scale-95 transition-all"
-              title="Descargar PDF de activación en Horizontal A4"
+              title="Descargar PDF de activación"
             >
               <Printer size={13} />
               <span>Activación PDF</span>

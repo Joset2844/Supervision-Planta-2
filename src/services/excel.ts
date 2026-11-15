@@ -1562,7 +1562,7 @@ export function imprimirActivacion(filas: any[], fechaTxt: string, turnoTxt: str
     doc.setFontSize(7);
     doc.setTextColor(100, 116, 139);
     doc.text(
-      `Generado: ${generado}  ·  Activación de Máquinas (Horizontal A4)`,
+      `Generado: ${generado}  ·  Activación de Máquinas`,
       marginX,
       pageHeight - 6.2
     );

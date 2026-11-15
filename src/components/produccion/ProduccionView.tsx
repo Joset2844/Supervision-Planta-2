@@ -45,6 +45,7 @@ import {
 } from '../../services/reports';
 import { getSupabaseConfig, sbLogin } from '../../services/supabase';
 import { Maquina, TurnoMaquina, RegistroTurno } from '../../types';
+import { HistorialOpModal } from './HistorialOpModal';
 
 const MOTIVOS_PARADA = ['Mantenimiento', 'Falta de personal', 'Desglose', 'Calibración'];
 
@@ -75,6 +76,7 @@ export const ProduccionView: React.FC = () => {
   const [textoRespaldo, setTextoRespaldo] = useState('');
   const [textoRestaurar, setTextoRestaurar] = useState('');
   const [reportesAbiertosMobile, setReportesAbiertosMobile] = useState(false);
+  const [opHistorialAbierta, setOpHistorialAbierta] = useState<string | null>(null);
 
   // DB save & auth states
   const [guardandoDB, setGuardandoDB] = useState(false);
@@ -334,7 +336,7 @@ export const ProduccionView: React.FC = () => {
     const tipo = metaTurno.tipo ? etiquetaTurno(metaTurno.tipo) : '';
     const nombre = `activacion_${metaTurno.fecha || 'sin-fecha'}_${metaTurno.tipo || 'sin-turno'}`;
     imprimirActivacion(filas, fecha, tipo, nombre);
-    showToast('ok', `PDF de activación descargado (Horizontal A4): ${nombre}.pdf`);
+    showToast('ok', `PDF de activación descargado: ${nombre}.pdf`);
   };
 
   const handleCopiarReporteWsp = async () => {
@@ -995,17 +997,28 @@ export const ProduccionView: React.FC = () => {
                           <div>
                             {t.op ? (
                               <div className="space-y-1.5">
-                                <div className="flex items-center justify-between gap-2 py-1.5 px-2.5 rounded-lg bg-[#232A38] border border-[#4A5568]">
-                                  <span className="font-['IBM_Plex_Mono',monospace] font-bold text-xs sm:text-sm text-[#F6AD55]">
+                                <div className="flex items-center justify-between gap-2 py-1.5 px-2.5 rounded-lg bg-[#232A38] border border-[#4A5568] flex-wrap">
+                                  <span className="font-['IBM_Plex_Mono',monospace] font-bold text-xs sm:text-sm text-[#F6AD55] truncate">
                                     {t.op}
                                   </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => updateTurnoMaquina(m.id, inst, { op: '', modeloIdx: -1 })}
-                                    className="text-[#E53E3E] hover:underline text-xs font-semibold cursor-pointer"
-                                  >
-                                    ✕ Cambiar
-                                  </button>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => setOpHistorialAbierta(t.op)}
+                                      className="flex items-center gap-1 py-0.5 px-2 rounded-md bg-[#2B6CB0]/25 hover:bg-[#2B6CB0]/40 border border-[#63B3ED]/40 text-[#93C5FD] text-[11px] font-semibold cursor-pointer transition-colors"
+                                      title="Ver producción de esta OP en turnos anteriores"
+                                    >
+                                      <History size={12} />
+                                      <span>Turnos anteriores</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => updateTurnoMaquina(m.id, inst, { op: '', modeloIdx: -1 })}
+                                      className="text-[#E53E3E] hover:underline text-xs font-semibold cursor-pointer"
+                                    >
+                                      ✕ Cambiar
+                                    </button>
+                                  </div>
                                 </div>
 
                                 {/* Multi-model chips */}
@@ -1569,6 +1582,13 @@ export const ProduccionView: React.FC = () => {
           </div>
         )}
       </div>
+      {/* Modal Historial de OP en Turnos Anteriores */}
+      {opHistorialAbierta && (
+        <HistorialOpModal
+          op={opHistorialAbierta}
+          onClose={() => setOpHistorialAbierta(null)}
+        />
+      )}
     </div>
   );
 };

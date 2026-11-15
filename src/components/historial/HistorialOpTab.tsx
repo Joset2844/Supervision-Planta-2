@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   Search,
   X,
@@ -25,7 +25,17 @@ import { exportarPdfReporteOp } from '../../services/pdfOp';
 import { CatalogoItem } from '../../types';
 
 export const HistorialOpTab: React.FC = () => {
-  const { catalogo, historial, maquinas, turno, metaTurno, session, showToast } = useApp();
+  const {
+    catalogo,
+    historial,
+    maquinas,
+    turno,
+    metaTurno,
+    session,
+    showToast,
+    opPreseleccionadaHistorial,
+    setOpPreseleccionadaHistorial,
+  } = useApp();
 
   const [opInput, setOpInput] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -97,6 +107,15 @@ export const HistorialOpTab: React.FC = () => {
     },
     [catalogo, historial, maquinas, turno, metaTurno, session]
   );
+
+  useEffect(() => {
+    if (opPreseleccionadaHistorial && opPreseleccionadaHistorial.trim()) {
+      const targetOp = opPreseleccionadaHistorial.trim();
+      setOpInput(targetOp);
+      setOpPreseleccionadaHistorial('');
+      ejecutarConsulta(targetOp);
+    }
+  }, [opPreseleccionadaHistorial, setOpPreseleccionadaHistorial, ejecutarConsulta]);
 
   const handleSelectSuggestion = (item: CatalogoItem) => {
     setOpInput(item.op);

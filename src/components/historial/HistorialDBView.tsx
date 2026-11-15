@@ -346,7 +346,7 @@ export const HistorialDBView: React.FC = () => {
     }
   };
 
-  // Printable report for a past shift matching the Turno Excel format (Horizontal A4)
+  // Printable PDF report for a past shift matching the Turno Excel format
   const handleImprimirHistorial = (rec: TurnoDBRow) => {
     const filas = rec.filas || [];
     if (!filas.length) {
@@ -357,7 +357,9 @@ export const HistorialDBView: React.FC = () => {
     const titulo = `PRODUCCIÓN TURNO ${tipoLabel} ${fechaCorta(rec.fecha)}`;
     const autor = rec.created_by_email ? rec.created_by_email.split('@')[0] : 'Registro guardado';
     const subtitulo = `${fechaCorta(rec.fecha)} · Turno ${rec.tipo === 'noche' ? 'Noche' : 'Día'} · Guardado por: ${autor}`;
-    imprimirTurnoFormatoExcel(filas, titulo, subtitulo, maquinas);
+    const nombreBase = `turno_${rec.fecha || 'sin-fecha'}_${rec.tipo || 'dia'}`;
+    const archivo = imprimirTurnoFormatoExcel(filas, titulo, subtitulo, maquinas, nombreBase);
+    showToast('ok', `PDF generado: ${archivo}`);
   };
 
   const handleDescargarPdfEficiencia = (rec: TurnoDBRow) => {

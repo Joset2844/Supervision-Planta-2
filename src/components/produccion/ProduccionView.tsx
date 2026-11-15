@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Odometer } from '../common/Odometer';
 import {
@@ -44,7 +44,11 @@ import {
   copiarAlPortapapeles,
 } from '../../services/reports';
 import { getSupabaseConfig, sbLogin } from '../../services/supabase';
-import { Maquina, TurnoMaquina, RegistroTurno } from '../../types';
+import { Maquina, TurnoMaquina, RegistroTurno, TurnoDBRow } from '../../types';
+import {
+  cargarTurnosNubeSnapshot,
+  calcularAvanceOpEnTarjeta,
+} from '../../services/opHistory';
 import { HistorialOpModal } from './HistorialOpModal';
 import { HistorialMaquinaModal } from './HistorialMaquinaModal';
 
@@ -104,6 +108,20 @@ export const ProduccionView: React.FC = () => {
   const [modoCantidadMap, setModoCantidadMap] = useState<Record<string, 'total' | 'caja'>>({});
   const [opSuggestMap, setOpSuggestMap] = useState<Record<string, string>>({});
   const [showSuggestMap, setShowSuggestMap] = useState<Record<string, boolean>>({});
+  const [turnosNubeSnap, setTurnosNubeSnap] = useState<{
+    dbRows: TurnoDBRow[];
+    nubeDisponible: boolean;
+  }>({ dbRows: [], nubeDisponible: false });
+
+  useEffect(() => {
+    let cancelado = false;
+    cargarTurnosNubeSnapshot(session).then((snap) => {
+      if (!cancelado) setTurnosNubeSnap(snap);
+    });
+    return () => {
+      cancelado = true;
+    };
+  }, [session?.access_token]);
 
   const activas = useMemo(() => {
     const getR = (area: string) => (area === 'vasos_envases' ? 0 : area === 'papel_carton' ? 1 : 2);
@@ -832,6 +850,20 @@ export const ProduccionView: React.FC = () => {
                     : [];
 
                   const currentMatch = buscarEnCatalogo(catalogo, t.op);
+                  const avanceOp = t.op
+                    ? calcularAvanceOpEnTarjeta({
+                        op: t.op,
+                        modeloIdx: t.modeloIdx,
+                        maquina: m,
+                        catalogMatch: currentMatch,
+                        dbRows: turnosNubeSnap.dbRows,
+                        nubeDisponible: turnosNubeSnap.nubeDisponible,
+                        historial,
+                        turno,
+                        metaTurno,
+                        maquinas,
+                      })
+                    : null;
 
                   return (
                     <div
@@ -880,6 +912,23 @@ export const ProduccionView: React.FC = () => {
                                 }`}
                               >
                                 {m.tipoProducto.toUpperCase()}
+                              </span>
+                            )}
+                            {avanceOp && (
+                              <span
+                                className={`text-[9.5px] font-bold px-1.5 py-0.2 rounded font-['IBM_Plex_Mono',monospace] border ${
+                                  avanceOp.pct > 105
+                                    ? 'bg-[#E53E3E]/20 text-[#FC8181] border-[#E53E3E]/50'
+                                    : avanceOp.pct >= 100
+                                    ? 'bg-[#38A169]/20 text-[#48BB78] border-[#38A169]/50'
+                                    : avanceOp.pct >= 85
+                                    ? 'bg-[#F2A93B]/20 text-[#F6AD55] border-[#F2A93B]/50'
+                                    : 'bg-[#232A38] text-[#CBD5E0] border-[#4A5568]/60'
+                                }`}
+                                title={`Avance OP ${t.op}: ${avanceOp.acumulado.toLocaleString('es-PE')} / ${avanceOp.meta.toLocaleString('es-PE')} u`}
+                              >
+                                OP {avanceOp.pct.toFixed(0)}%
+                                {avanceOp.pct > 105 ? ' ⚠' : avanceOp.pct >= 100 ? ' ✓' : ''}
                               </span>
                             )}
                           </div>
@@ -1086,6 +1135,88 @@ export const ProduccionView: React.FC = () => {
                                         </span>
                                       );
                                     })()}
+                                  </div>
+                                )}
+
+                                {avanceOp && (
+                                  <div
+                                    className={`p-2 rounded-lg border space-y-1.5 ${
+                                      avanceOp.pct > 105
+                                        ? 'bg-[#E53E3E]/10 border-[#E53E3E]/50'
+                                        : avanceOp.pct >= 100
+                                        ? 'bg-[#38A169]/10 border-[#38A169]/50'
+                                        : avanceOp.pct >= 85
+                                        ? 'bg-[#F2A93B]/10 border-[#F2A93B]/50'
+                                        : 'bg-[#232A38]/80 border-[#2D3748]'
+                                    }`}
+                                  >
+                                    <div className="flex items-center justify-between gap-2 text-[10.5px] flex-wrap">
+                                      <span className="font-semibold text-[#CBD5E0] uppercase tracking-wide">
+                                        Avance OP{avanceOp.esPorModelo ? ' (Modelo)' : ''} ·{' '}
+                                        <span className="text-white">
+                                          {avanceOp.alcance === 'pp'
+                                            ? `PP (${m.nombre})`
+                                            : avanceOp.alcance === 'pt'
+                                            ? 'PT Total'
+                                            : m.nombre}
+                                        </span>
+                                      </span>
+                                      <span
+                                        className={`font-bold font-['IBM_Plex_Mono',monospace] ${
+                                          avanceOp.pct > 105
+                                            ? 'text-[#FC8181]'
+                                            : avanceOp.pct >= 100
+                                            ? 'text-[#48BB78]'
+                                            : avanceOp.pct >= 85
+                                            ? 'text-[#F6AD55]'
+                                            : 'text-[#93C5FD]'
+                                        }`}
+                                      >
+                                        {avanceOp.pct.toFixed(1)}% ·{' '}
+                                        {avanceOp.pct > 105
+                                          ? `⚠ Excedida (+${Math.abs(avanceOp.restante).toLocaleString('es-PE')} u)`
+                                          : avanceOp.pct >= 100
+                                          ? '✓ Completada'
+                                          : avanceOp.pct >= 85
+                                          ? `⚡ Por completar (faltan ${avanceOp.restante.toLocaleString('es-PE')} u)`
+                                          : `Faltan ${avanceOp.restante.toLocaleString('es-PE')} u`}
+                                      </span>
+                                    </div>
+
+                                    <div className="w-full bg-[#12161F] rounded-full h-2 overflow-hidden border border-[#2D3748]">
+                                      <div
+                                        className={`h-full rounded-full transition-all duration-300 ${
+                                          avanceOp.pct > 105
+                                            ? 'bg-[#E53E3E]'
+                                            : avanceOp.pct >= 100
+                                            ? 'bg-[#38A169]'
+                                            : avanceOp.pct >= 85
+                                            ? 'bg-[#F2A93B]'
+                                            : 'bg-[#3182CE]'
+                                        }`}
+                                        style={{ width: `${Math.min(100, Math.max(0, avanceOp.pct))}%` }}
+                                      />
+                                    </div>
+
+                                    <div className="flex items-center justify-between text-[10px] font-['IBM_Plex_Mono',monospace] text-[#A0AEC0] flex-wrap gap-1">
+                                      <span>
+                                        Ant:{' '}
+                                        <strong className="text-[#CBD5E0]">
+                                          {avanceOp.anterior.toLocaleString('es-PE')}
+                                        </strong>{' '}
+                                        + Act:{' '}
+                                        <strong className="text-[#F6AD55]">
+                                          {avanceOp.actual.toLocaleString('es-PE')}
+                                        </strong>
+                                      </span>
+                                      <span>
+                                        Total:{' '}
+                                        <strong className="text-white">
+                                          {avanceOp.acumulado.toLocaleString('es-PE')}
+                                        </strong>{' '}
+                                        / {avanceOp.meta.toLocaleString('es-PE')} u
+                                      </span>
+                                    </div>
                                   </div>
                                 )}
                               </div>

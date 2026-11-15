@@ -426,12 +426,14 @@ export function agruparParaExportar(items: ListaItem[]) {
         unidadesXCaja: item.unidadesXCaja,
         cantidadCajas: 0,
         totalUnidades: 0,
+        lineas: 0,
         observaciones: [] as string[],
       };
       orden.push(key);
     }
     mapa[key].cantidadCajas += item.cantidadCajas;
     mapa[key].totalUnidades += item.totalUnidades;
+    mapa[key].lineas += 1;
     if (item.observacion && mapa[key].observaciones.indexOf(item.observacion) === -1) {
       mapa[key].observaciones.push(item.observacion);
     }
@@ -468,9 +470,36 @@ export function prepararFilasInventario(lista: ListaItem[], catalogo: CatalogoIt
   });
 }
 
+export function prepararFilasConsolidadoInventario(lista: ListaItem[], catalogo: CatalogoItem[]) {
+  const ordenadas = [...(lista || [])].reverse();
+  const grupos = agruparParaExportar(ordenadas);
+  return grupos.map((g, idx) => {
+    const match = buscarEnCatalogo(catalogo, g.op);
+    const empaqueTxt = g.tipoEmpaque === 'paquete' ? 'Paquete' : 'Caja';
+    const sap = g.sap || (match && match.sap ? match.sap : '');
+    const unidadesXEmp = Number(g.unidadesXCaja) || 0;
+    const cantEmp = Number(g.cantidadCajas) || 0;
+    const totalUnid = Number(g.totalUnidades) || unidadesXEmp * cantEmp;
+    return {
+      indice: idx + 1,
+      op: g.op || '',
+      sap,
+      descripcion: g.descripcion || '',
+      cliente: g.cliente || '',
+      empaque: empaqueTxt,
+      unidadesXEmp,
+      cantEmp,
+      totalUnid,
+      lineas: Number(g.lineas) || 1,
+      observacion: g.observacion || '',
+    };
+  });
+}
+
 export async function exportarInventarioExcel(lista: ListaItem[], catalogo: CatalogoItem[]) {
   const filas = prepararFilasInventario(lista, catalogo);
   if (filas.length === 0) return;
+  const filasConsolidado = prepararFilasConsolidadoInventario(lista, catalogo);
 
   const totalUnidades = filas.reduce((acc, f) => acc + f.totalUnid, 0);
   const totalEmpaques = filas.reduce((acc, f) => acc + f.cantEmp, 0);
@@ -488,6 +517,8 @@ export async function exportarInventarioExcel(lista: ListaItem[], catalogo: Cata
 
   try {
     const wb = new ExcelJS.Workbook();
+
+    // ==================== HOJA 1: DETALLE POR LÍNEA (SIN SUMAR) ====================
     const ws = wb.addWorksheet('Inventario');
     ws.columns = [
       { width: 6 },  // #
@@ -502,7 +533,6 @@ export async function exportarInventarioExcel(lista: ListaItem[], catalogo: Cata
       { width: 30 }, // OBSERVACIÓN
     ];
 
-    // Row 1: Main Title Banner
     ws.mergeCells(1, 1, 1, 10);
     const rTitulo = ws.getRow(1);
     rTitulo.height = 24;
@@ -511,7 +541,6 @@ export async function exportarInventarioExcel(lista: ListaItem[], catalogo: Cata
     rTitulo.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF12161F' } };
     rTitulo.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
 
-    // Row 2: Sub-banner with summary
     ws.mergeCells(2, 1, 2, 10);
     const rSub = ws.getRow(2);
     rSub.height = 18;
@@ -520,7 +549,6 @@ export async function exportarInventarioExcel(lista: ListaItem[], catalogo: Cata
     rSub.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD97706' } };
     rSub.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
 
-    // Row 3: Column Headers
     const headers = [
       '#',
       'OP',
@@ -544,7 +572,6 @@ export async function exportarInventarioExcel(lista: ListaItem[], catalogo: Cata
       c.border = EXCELJS_BORDES;
     });
 
-    // Data rows (sin agrupar ni sumar líneas entre sí)
     let rowIdx = 4;
     filas.forEach((f, idx) => {
       const r = ws.getRow(rowIdx);
@@ -582,7 +609,6 @@ export async function exportarInventarioExcel(lista: ListaItem[], catalogo: Cata
       rowIdx++;
     });
 
-    // Total Row
     ws.mergeCells(rowIdx, 1, rowIdx, 7);
     const rTot = ws.getRow(rowIdx);
     rTot.height = 20;
@@ -612,13 +638,140 @@ export async function exportarInventarioExcel(lista: ListaItem[], catalogo: Cata
       fitToHeight: 1,
     };
 
+    // ==================== HOJA 2: CONSOLIDADO AGRUPADO POR OP / MODELO ====================
+    const wsRes = wb.addWorksheet('Consolidado por OP');
+    wsRes.columns = [
+      { width: 6 },  // #
+      { width: 13 }, // OP
+      { width: 15 }, // SAP
+      { width: 42 }, // DESCRIPCIÓN
+      { width: 24 }, // CLIENTE
+      { width: 12 }, // EMPAQUE
+      { width: 15 }, // UNID. X EMP.
+      { width: 14 }, // CANT. EMP.
+      { width: 17 }, // TOTAL UNIDADES
+      { width: 10 }, // LÍNEAS
+      { width: 30 }, // OBSERVACIONES
+    ];
+
+    wsRes.mergeCells(1, 1, 1, 11);
+    const rTitulo2 = wsRes.getRow(1);
+    rTitulo2.height = 24;
+    rTitulo2.getCell(1).value = `CONSOLIDADO DE INVENTARIO POR OP — ${fechaCorta}`;
+    rTitulo2.getCell(1).font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
+    rTitulo2.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF12161F' } };
+    rTitulo2.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+
+    wsRes.mergeCells(2, 1, 2, 11);
+    const rSub2 = wsRes.getRow(2);
+    rSub2.height = 18;
+    rSub2.getCell(1).value = `Generado: ${fechaHora}   |   Grupos consolidados: ${filasConsolidado.length}   |   Líneas origen: ${filas.length}   |   Total unidades: ${totalUnidades.toLocaleString('es-PE')} u`;
+    rSub2.getCell(1).font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+    rSub2.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD97706' } };
+    rSub2.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+
+    const headers2 = [
+      '#',
+      'OP',
+      'SAP',
+      'DESCRIPCIÓN / MODELO',
+      'CLIENTE',
+      'EMPAQUE',
+      'UNID. X EMP.',
+      'CANT. EMP.',
+      'TOTAL UNIDADES',
+      'LÍNEAS',
+      'OBSERVACIONES',
+    ];
+    const rHead2 = wsRes.getRow(3);
+    rHead2.height = 22;
+    headers2.forEach((h, i) => {
+      const c = rHead2.getCell(i + 1);
+      c.value = h;
+      c.font = { bold: true, size: 10, color: { argb: 'FF333333' } };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
+      c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      c.border = EXCELJS_BORDES;
+    });
+
+    let rowIdx2 = 4;
+    filasConsolidado.forEach((f, idx) => {
+      const r = wsRes.getRow(rowIdx2);
+      const vals = [
+        f.indice,
+        f.op,
+        f.sap,
+        f.descripcion,
+        f.cliente,
+        f.empaque,
+        f.unidadesXEmp,
+        f.cantEmp,
+        f.totalUnid,
+        f.lineas,
+        f.observacion,
+      ];
+      const esPar = idx % 2 === 1;
+      vals.forEach((v, colIdx) => {
+        const c = r.getCell(colIdx + 1);
+        c.value = v;
+        c.border = EXCELJS_BORDES;
+        if (esPar) {
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFAFAFA' } };
+        }
+        if (colIdx === 0 || colIdx === 1 || colIdx === 2 || colIdx === 5 || colIdx === 9) {
+          c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+          if (colIdx === 1) c.font = { bold: true, color: { argb: 'FF12161F' } };
+          if (colIdx === 9) c.numFmt = '#,##0';
+        } else if (colIdx === 6 || colIdx === 7 || colIdx === 8) {
+          c.alignment = { horizontal: 'right', vertical: 'middle' };
+          c.numFmt = '#,##0';
+          if (colIdx === 8) c.font = { bold: true, color: { argb: 'FF1E40AF' } };
+        } else {
+          c.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+        }
+      });
+      rowIdx2++;
+    });
+
+    wsRes.mergeCells(rowIdx2, 1, rowIdx2, 7);
+    const rTot2 = wsRes.getRow(rowIdx2);
+    rTot2.height = 20;
+    rTot2.getCell(1).value = `TOTAL CONSOLIDADO (${filasConsolidado.length} GRUPO${filasConsolidado.length !== 1 ? 'S' : ''})`;
+    for (let i = 1; i <= 11; i++) {
+      const cell = rTot2.getCell(i);
+      cell.font = { bold: true, size: 10.5 };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDEBD0' } };
+      cell.border = EXCELJS_BORDES;
+      cell.alignment = { vertical: 'middle' };
+    }
+    rTot2.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
+    rTot2.getCell(8).value = totalEmpaques;
+    rTot2.getCell(8).numFmt = '#,##0';
+    rTot2.getCell(8).alignment = { horizontal: 'right', vertical: 'middle' };
+    rTot2.getCell(9).value = totalUnidades;
+    rTot2.getCell(9).numFmt = '#,##0';
+    rTot2.getCell(9).alignment = { horizontal: 'right', vertical: 'middle' };
+    rTot2.getCell(9).font = { bold: true, size: 11, color: { argb: 'FFB45309' } };
+    rTot2.getCell(10).value = filas.length;
+    rTot2.getCell(10).numFmt = '#,##0';
+    rTot2.getCell(10).alignment = { horizontal: 'center', vertical: 'middle' };
+
+    wsRes.views = [{ state: 'frozen', ySplit: 3 }];
+    wsRes.pageSetup = {
+      orientation: 'landscape',
+      paperSize: 9,
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 1,
+    };
+
     const buffer = await wb.xlsx.writeBuffer();
     const blob = new Blob([buffer], {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     });
     descargarBlob(blob, nombre);
   } catch {
-    // Fallback to SheetJS (sin agrupar ni sumar líneas)
+    // Fallback to SheetJS (Hoja 1 sin agrupar + Hoja 2 consolidado)
     const filasSimple = filas.map((f) => ({
       '#': f.indice,
       OP: f.op,
@@ -644,8 +797,38 @@ export async function exportarInventarioExcel(lista: ListaItem[], catalogo: Cata
       { wch: 16 },
       { wch: 30 },
     ];
+
+    const filasSimple2 = filasConsolidado.map((f) => ({
+      '#': f.indice,
+      OP: f.op,
+      SAP: f.sap,
+      Descripción: f.descripcion,
+      Cliente: f.cliente,
+      Empaque: f.empaque,
+      'Unidades x empaque': f.unidadesXEmp,
+      'Cantidad de empaques': f.cantEmp,
+      'Total unidades': f.totalUnid,
+      Líneas: f.lineas,
+      Observaciones: f.observacion,
+    }));
+    const ws2 = XLSX.utils.json_to_sheet(filasSimple2);
+    ws2['!cols'] = [
+      { wch: 6 },
+      { wch: 13 },
+      { wch: 14 },
+      { wch: 38 },
+      { wch: 22 },
+      { wch: 11 },
+      { wch: 16 },
+      { wch: 16 },
+      { wch: 16 },
+      { wch: 10 },
+      { wch: 30 },
+    ];
+
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
+    XLSX.utils.book_append_sheet(wb, ws2, 'Consolidado por OP');
     const wbArray = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
     const blob = new Blob([wbArray], {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -654,13 +837,14 @@ export async function exportarInventarioExcel(lista: ListaItem[], catalogo: Cata
   }
 }
 
-export function imprimirInventarioFormatoExcel(lista: ListaItem[], catalogo: CatalogoItem[]) {
+export function imprimirInventarioFormatoExcel(lista: ListaItem[], catalogo: CatalogoItem[]): string {
   const filas = prepararFilasInventario(lista, catalogo);
-  if (filas.length === 0) return;
+  if (filas.length === 0) return '';
 
   const totalUnidades = filas.reduce((acc, f) => acc + f.totalUnid, 0);
   const totalEmpaques = filas.reduce((acc, f) => acc + f.cantEmp, 0);
   const ahora = new Date();
+  const hoyIso = ahora.toISOString().slice(0, 10);
   const fechaCorta = ahora.toLocaleDateString('es-PE', {
     day: '2-digit',
     month: '2-digit',
@@ -675,342 +859,244 @@ export function imprimirInventarioFormatoExcel(lista: ListaItem[], catalogo: Cat
   });
 
   const titulo = `INVENTARIO DE PRODUCCIÓN — ${fechaCorta}`;
-  const subtitulo = `Generado: ${fechaHora} · Detalle por línea registrada (${filas.length} registro${filas.length !== 1 ? 's' : ''})`;
+  const subtitulo = `Generado: ${fechaHora}  ·  Detalle por línea registrada (${filas.length} registro${filas.length !== 1 ? 's' : ''})`;
+  const nombreArchivo = `inventario_${hoyIso}.pdf`;
 
-  const tbodyHtml = filas
-    .map(
-      (f, idx) => `
-      <tr class="${idx % 2 === 1 ? 'alt-row' : ''}">
-        <td class="idx-cell">${f.indice}</td>
-        <td class="op-cell">${escapeHtml(f.op)}</td>
-        <td class="sap-cell">${escapeHtml(f.sap || '—')}</td>
-        <td class="prod-cell">${escapeHtml(f.descripcion)}</td>
-        <td class="cli-cell">${escapeHtml(f.cliente || '—')}</td>
-        <td class="emp-cell">${escapeHtml(f.empaque)}</td>
-        <td class="num">${f.unidadesXEmp.toLocaleString('es-PE')}</td>
-        <td class="num">${f.cantEmp.toLocaleString('es-PE')}</td>
-        <td class="num total-cell">${f.totalUnid.toLocaleString('es-PE')}</td>
-        <td class="obs-cell">${escapeHtml(f.observacion)}</td>
-      </tr>`
-    )
-    .join('');
+  const doc = new jsPDF({
+    orientation: 'landscape',
+    unit: 'mm',
+    format: 'a4',
+  });
 
-  const html = `<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <title>${escapeHtml(titulo)}</title>
-  <style>
-    @page {
-      size: A4 landscape;
-      margin: 5mm;
+  const pageWidth = 297;
+  const pageHeight = 210;
+  const marginX = 10;
+  const contentWidth = pageWidth - marginX * 2; // 277 mm
+
+  // Column widths summing strictly to 277 mm
+  const colWidths = [10, 20, 22, 76, 44, 20, 21, 19, 23, 22];
+  const colX: number[] = [];
+  let accX = marginX;
+  colWidths.forEach((w) => {
+    colX.push(accX);
+    accX += w;
+  });
+
+  const headers = [
+    '#',
+    'OP',
+    'SAP',
+    'DESCRIPCIÓN / MODELO',
+    'CLIENTE',
+    'EMPAQUE',
+    'UNID. × EMP.',
+    'CANT. EMP.',
+    'TOTAL UNID.',
+    'OBSERVACIÓN',
+  ];
+
+  let y = 11;
+
+  const drawMainHeader = () => {
+    doc.setFillColor(18, 22, 31); // #12161F
+    doc.rect(marginX, y, contentWidth, 15.5, 'F');
+    doc.setFillColor(242, 169, 59); // #F2A93B
+    doc.rect(marginX, y, 3.5, 15.5, 'F');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.setTextColor(255, 255, 255);
+    doc.text(titulo, marginX + 6.5, y + 6.5);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.2);
+    doc.setTextColor(203, 213, 224);
+    doc.text(subtitulo, marginX + 6.5, y + 12);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(242, 169, 59);
+    doc.text(
+      `Total: ${totalUnidades.toLocaleString('es-PE')} u  (${filas.length} líneas)`,
+      marginX + contentWidth - 4,
+      y + 9.2,
+      { align: 'right' }
+    );
+
+    y += 18;
+  };
+
+  const drawSectionAndTableHeaders = (isContinuation = false) => {
+    doc.setFillColor(217, 119, 6); // #D97706
+    doc.setDrawColor(183, 183, 183);
+    doc.setLineWidth(0.2);
+    doc.rect(marginX, y, contentWidth, 6.2, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(255, 255, 255);
+    doc.text(
+      isContinuation
+        ? 'DETALLE DE PIEZAS Y EMPAQUES REGISTRADOS (CONTINUACIÓN)'
+        : 'DETALLE DE PIEZAS Y EMPAQUES REGISTRADOS',
+      marginX + 3,
+      y + 4.2
+    );
+    y += 6.2;
+
+    doc.setFillColor(242, 242, 242); // #F2F2F2
+    doc.rect(marginX, y, contentWidth, 6.2, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.1);
+    doc.setTextColor(51, 51, 51);
+    headers.forEach((h, i) => {
+      doc.line(colX[i], y, colX[i], y + 6.2);
+      doc.text(h, colX[i] + colWidths[i] / 2, y + 4.2, { align: 'center' });
+    });
+    doc.line(marginX + contentWidth, y, marginX + contentWidth, y + 6.2);
+    y += 6.2;
+  };
+
+  drawMainHeader();
+  drawSectionAndTableHeaders(false);
+
+  filas.forEach((f, idx) => {
+    const values = [
+      String(f.indice),
+      String(f.op || ''),
+      String(f.sap || '—'),
+      String(f.descripcion || ''),
+      String(f.cliente || '—'),
+      String(f.empaque || ''),
+      f.unidadesXEmp.toLocaleString('es-PE'),
+      f.cantEmp.toLocaleString('es-PE'),
+      f.totalUnid.toLocaleString('es-PE'),
+      String(f.observacion || ''),
+    ];
+
+    doc.setFontSize(7.2);
+    const wrappedLines = values.map((val, cIdx) => {
+      if (!val) return [''];
+      return doc.splitTextToSize(val, colWidths[cIdx] - 2.4) as string[];
+    });
+
+    const maxLines = Math.max(...wrappedLines.map((l) => l.length), 1);
+    const rowH = Math.max(5.5, maxLines * 3.2 + 2.2);
+
+    if (y + rowH > pageHeight - 14) {
+      doc.addPage('a4', 'landscape');
+      y = 11;
+      drawMainHeader();
+      drawSectionAndTableHeaders(true);
     }
-    * {
-      box-sizing: border-box;
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
+
+    if (idx % 2 === 1) {
+      doc.setFillColor(250, 250, 250);
+      doc.rect(marginX, y, contentWidth, rowH, 'F');
     }
-    html, body {
-      margin: 0;
-      padding: 0;
-      width: 285mm;
-      max-width: 285mm;
-      background: #ffffff;
-      font-family: Arial, Helvetica, sans-serif;
-      color: #111827;
-      font-size: 9.5px;
-    }
-    @media print {
-      html, body {
-        width: 285mm;
-        height: auto;
-        max-height: 192mm;
-        overflow: hidden !important;
+
+    doc.setDrawColor(183, 183, 183);
+    doc.setLineWidth(0.2);
+    colX.forEach((cx) => {
+      doc.line(cx, y, cx, y + rowH);
+    });
+    doc.line(marginX + contentWidth, y, marginX + contentWidth, y + rowH);
+    doc.line(marginX, y + rowH, marginX + contentWidth, y + rowH);
+
+    wrappedLines.forEach((lines, cIdx) => {
+      if (lines.length === 1 && lines[0] === '') return;
+
+      if (cIdx === 1 || cIdx === 8) {
+        doc.setFont('helvetica', 'bold');
+      } else {
+        doc.setFont('helvetica', 'normal');
       }
-    }
-    #print-viewport {
-      width: 285mm;
-      overflow: hidden;
-      page-break-inside: avoid;
-      break-inside: avoid;
-      page-break-after: avoid;
-      break-after: avoid;
-    }
-    #sheet-content {
-      width: 285mm;
-      transform-origin: top left;
-    }
-    .title-banner {
-      background: #12161F;
-      color: #FFFFFF;
-      padding: 6px 10px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      border-bottom: 3px solid #F2A93B;
-      margin-bottom: 6px;
-    }
-    .title-main {
-      font-size: 13px;
-      font-weight: 700;
-      letter-spacing: 0.4px;
-      text-transform: uppercase;
-    }
-    .title-sub {
-      font-size: 9px;
-      color: #CBD5E0;
-      margin-top: 1px;
-    }
-    .title-stats {
-      text-align: right;
-      font-size: 10px;
-      white-space: nowrap;
-    }
-    .title-stats strong {
-      color: #F2A93B;
-      font-size: 11px;
-    }
-    .area-banner {
-      background: #D97706;
-      color: #FFFFFF;
-      font-weight: 700;
-      font-size: 10px;
-      padding: 3px 7px;
-      letter-spacing: 0.4px;
-      border: 1px solid #B7B7B7;
-      border-bottom: none;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      table-layout: fixed;
-    }
-    th, td {
-      border: 1px solid #B7B7B7;
-      padding: 2.5px 4.5px;
-      vertical-align: middle;
-      word-wrap: break-word;
-      overflow-wrap: anywhere;
-      line-height: 1.2;
-    }
-    th {
-      background: #F2F2F2;
-      color: #333333;
-      font-weight: 700;
-      font-size: 8.5px;
-      text-align: center;
-    }
-    .alt-row td {
-      background: #FAFAFA;
-    }
-    .idx-cell, .op-cell, .sap-cell, .emp-cell {
-      font-family: 'Courier New', Courier, monospace;
-      text-align: center;
-      font-size: 9px;
-    }
-    .op-cell {
-      font-weight: 700;
-      color: #12161F;
-    }
-    .prod-cell, .cli-cell, .obs-cell {
-      text-align: left;
-    }
-    .num {
-      text-align: right;
-      font-family: 'Courier New', Courier, monospace;
-      font-weight: 600;
-    }
-    .total-cell {
-      font-weight: 700;
-      color: #1E40AF;
-    }
-    .total-row td {
-      background: #FDEBD0;
-      font-weight: 700;
-      font-size: 9.5px;
-    }
-    .grand-total {
-      margin-top: 5px;
-      background: #12161F;
-      color: #FFFFFF;
-      padding: 5px 9px;
-      display: flex;
-      justify-content: space-between;
-      font-size: 10px;
-      font-weight: 700;
-      border-radius: 2px;
-    }
-    .grand-total span.val {
-      color: #F2A93B;
-      font-family: 'Courier New', Courier, monospace;
-    }
-    .grand-total span.sub-val {
-      color: #93C5FD;
-      font-family: 'Courier New', Courier, monospace;
-      margin-right: 12px;
-    }
 
-    #sheet-content.compact .title-banner { padding: 4px 8px; margin-bottom: 4px; }
-    #sheet-content.compact .title-main { font-size: 12px; }
-    #sheet-content.compact .area-banner { padding: 2px 6px; font-size: 9.5px; }
-    #sheet-content.compact th,
-    #sheet-content.compact td { padding: 1.8px 3.5px; font-size: 8.8px; line-height: 1.15; }
-    #sheet-content.compact th { font-size: 8px; }
-    #sheet-content.compact .grand-total { padding: 4px 8px; font-size: 9px; margin-top: 3px; }
+      if (cIdx === 8) {
+        doc.setTextColor(30, 64, 175); // #1E40AF
+      } else {
+        doc.setTextColor(17, 24, 39);
+      }
 
-    #sheet-content.ultra-compact .title-banner { padding: 3px 7px; margin-bottom: 3px; }
-    #sheet-content.ultra-compact .title-main { font-size: 11px; }
-    #sheet-content.ultra-compact .area-banner { padding: 1.5px 5px; font-size: 9px; }
-    #sheet-content.ultra-compact th,
-    #sheet-content.ultra-compact td { padding: 1.2px 3px; font-size: 8.2px; line-height: 1.12; }
-    #sheet-content.ultra-compact th { font-size: 7.6px; }
-    #sheet-content.ultra-compact .grand-total { padding: 3px 7px; font-size: 8.5px; margin-top: 2px; }
-  </style>
-</head>
-<body>
-  <div id="mm-ruler" style="position:absolute;top:-9999px;left:0;width:100mm;height:100mm;visibility:hidden;pointer-events:none;"></div>
-  <div id="print-viewport">
-    <div id="sheet-content">
-      <div class="title-banner">
-        <div>
-          <div class="title-main">${escapeHtml(titulo)}</div>
-          <div class="title-sub">${escapeHtml(subtitulo)}</div>
-        </div>
-        <div class="title-stats">
-          Total: <strong>${totalUnidades.toLocaleString('es-PE')} u</strong>
-          <span style="color:#A0AEC0;margin-left:8px;">(${filas.length} líneas)</span>
-        </div>
-      </div>
+      const totalTextH = lines.length * 3.2;
+      let startTextY = y + (rowH - totalTextH) / 2 + 2.5;
 
-      <div class="area-banner">DETALLE DE PIEZAS Y EMPAQUES REGISTRADOS</div>
-      <table>
-        <thead>
-          <tr>
-            <th style="width:4%">#</th>
-            <th style="width:8%">OP</th>
-            <th style="width:9%">SAP</th>
-            <th style="width:24%">DESCRIPCIÓN / MODELO</th>
-            <th style="width:15%">CLIENTE</th>
-            <th style="width:7%">EMPAQUE</th>
-            <th style="width:8%">UNID. × EMP.</th>
-            <th style="width:7%">CANT. EMP.</th>
-            <th style="width:9%">TOTAL UNID.</th>
-            <th style="width:9%">OBSERVACIÓN</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${tbodyHtml}
-          <tr class="total-row">
-            <td colspan="7">TOTAL GENERAL (${filas.length} LÍNEA${filas.length !== 1 ? 'S' : ''})</td>
-            <td class="num">${totalEmpaques.toLocaleString('es-PE')}</td>
-            <td class="num total-cell">${totalUnidades.toLocaleString('es-PE')}</td>
-            <td></td>
-          </tr>
-        </tbody>
-      </table>
+      lines.forEach((line) => {
+        if (cIdx === 0 || cIdx === 1 || cIdx === 2 || cIdx === 5) {
+          doc.text(line, colX[cIdx] + colWidths[cIdx] / 2, startTextY, { align: 'center' });
+        } else if (cIdx === 6 || cIdx === 7 || cIdx === 8) {
+          doc.text(line, colX[cIdx] + colWidths[cIdx] - 1.4, startTextY, { align: 'right' });
+        } else {
+          doc.text(line, colX[cIdx] + 1.4, startTextY);
+        }
+        startTextY += 3.2;
+      });
+    });
 
-      <div class="grand-total">
-        <span>RESUMEN DE INVENTARIO (${filas.length} LÍNEAS)</span>
-        <div>
-          EMPAQUES: <span class="sub-val">${totalEmpaques.toLocaleString('es-PE')}</span>
-          TOTAL UNIDADES: <span class="val">${totalUnidades.toLocaleString('es-PE')} u</span>
-        </div>
-      </div>
-    </div>
-  </div>
-</body>
-</html>`;
+    y += rowH;
+  });
 
-  const iframe = document.createElement('iframe');
-  iframe.style.position = 'fixed';
-  iframe.style.left = '-12000px';
-  iframe.style.top = '0';
-  iframe.style.width = '1200px';
-  iframe.style.height = '900px';
-  iframe.style.border = '0';
-  iframe.style.opacity = '0';
-  iframe.style.pointerEvents = 'none';
-  iframe.setAttribute('aria-hidden', 'true');
-  document.body.appendChild(iframe);
-
-  const doc = iframe.contentWindow?.document;
-  if (!doc || !iframe.contentWindow) {
-    document.body.removeChild(iframe);
-    return;
+  // Total Row (#FDEBD0) + Grand Total Banner (#12161F)
+  if (y + 18 > pageHeight - 13) {
+    doc.addPage('a4', 'landscape');
+    y = 12;
   }
 
-  doc.open();
-  doc.write(html);
-  doc.close();
+  doc.setFillColor(253, 235, 208);
+  doc.setDrawColor(183, 183, 183);
+  doc.setLineWidth(0.22);
+  doc.rect(marginX, y, contentWidth, 6.4, 'FD');
 
-  const fitSingleLandscapePage = () => {
-    const ruler = doc.getElementById('mm-ruler');
-    const viewport = doc.getElementById('print-viewport');
-    const content = doc.getElementById('sheet-content');
-    if (!ruler || !viewport || !content) return;
-
-    const rulerRect = ruler.getBoundingClientRect();
-    const pxPerMm = rulerRect.height > 0 ? rulerRect.height / 100 : 3.7795275591;
-    const widthMm = 285;
-    const maxHeightMm = 190;
-    const maxH = maxHeightMm * pxPerMm;
-
-    content.style.width = `${widthMm}mm`;
-
-    if (content.scrollHeight > maxH) {
-      content.classList.add('compact');
+  colX.forEach((cx, cIdx) => {
+    if (cIdx >= 7) {
+      doc.line(cx, y, cx, y + 6.4);
     }
-    if (content.scrollHeight > maxH * 1.18) {
-      content.classList.add('ultra-compact');
-    }
+  });
 
-    let bestScale = 1;
-    if (content.scrollHeight > maxH) {
-      let low = 0.25;
-      let high = 1.0;
-      bestScale = 0.25;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(17, 24, 39);
+  doc.text(`TOTAL GENERAL (${filas.length} LÍNEA${filas.length !== 1 ? 'S' : ''})`, marginX + 2.5, y + 4.3);
+  doc.text(totalEmpaques.toLocaleString('es-PE'), colX[7] + colWidths[7] - 1.4, y + 4.3, { align: 'right' });
+  doc.setTextColor(30, 64, 175);
+  doc.text(totalUnidades.toLocaleString('es-PE'), colX[8] + colWidths[8] - 1.4, y + 4.3, { align: 'right' });
+  y += 8.5;
 
-      for (let step = 0; step < 14; step++) {
-        const mid = (low + high) / 2;
-        content.style.width = `${(widthMm / mid).toFixed(3)}mm`;
-        const h = content.scrollHeight;
-        if (h * mid <= maxH * 0.985) {
-          bestScale = mid;
-          low = mid;
-        } else {
-          high = mid;
-        }
-      }
+  doc.setFillColor(18, 22, 31);
+  doc.rect(marginX, y, contentWidth, 7.5, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(255, 255, 255);
+  doc.text(`RESUMEN DE INVENTARIO (${filas.length} LÍNEAS)`, marginX + 3, y + 5);
 
-      content.style.width = `${(widthMm / bestScale).toFixed(3)}mm`;
-      content.style.transform = `scale(${bestScale.toFixed(5)})`;
-      content.style.transformOrigin = 'top left';
-    }
+  doc.setTextColor(242, 169, 59);
+  doc.text(
+    `EMPAQUES: ${totalEmpaques.toLocaleString('es-PE')}   ·   TOTAL UNIDADES: ${totalUnidades.toLocaleString('es-PE')} u`,
+    marginX + contentWidth - 3,
+    y + 5,
+    { align: 'right' }
+  );
 
-    const scaledHeightMm = Math.min(maxHeightMm, (content.scrollHeight / pxPerMm) * bestScale + 0.5);
-    viewport.style.width = `${widthMm}mm`;
-    viewport.style.height = `${scaledHeightMm.toFixed(2)}mm`;
-    viewport.style.overflow = 'hidden';
+  // Page footer on all pages
+  const totalPages = (doc as any).internal.getNumberOfPages();
+  for (let p = 1; p <= totalPages; p++) {
+    doc.setPage(p);
+    doc.setDrawColor(203, 213, 224);
+    doc.setLineWidth(0.2);
+    doc.line(marginX, pageHeight - 10, marginX + contentWidth, pageHeight - 10);
 
-    ruler.remove();
-  };
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Generado: ${fechaHora}  ·  Inventario de Producción`, marginX, pageHeight - 6.2);
+    doc.text(`Página ${p} de ${totalPages}`, marginX + contentWidth, pageHeight - 6.2, {
+      align: 'right',
+    });
+  }
 
-  const cleanup = () => {
-    if (iframe.parentNode) {
-      iframe.parentNode.removeChild(iframe);
-    }
-  };
-
-  iframe.contentWindow.addEventListener('afterprint', cleanup, { once: true });
-  setTimeout(() => {
-    try {
-      fitSingleLandscapePage();
-      iframe.contentWindow?.focus();
-      iframe.contentWindow?.print();
-    } finally {
-      setTimeout(cleanup, 60000);
-    }
-  }, 180);
+  doc.save(nombreArchivo);
+  return nombreArchivo;
 }
 
 // ----------------- TURNO INSTANCIAS & MULTI-OP -----------------
@@ -1316,8 +1402,9 @@ export function imprimirTurnoFormatoExcel(
   filasOriginales: FilaTurnoExcel[],
   titulo: string,
   subtitulo: string,
-  maquinasCatalogo: Maquina[] = []
-) {
+  maquinasCatalogo: Maquina[] = [],
+  nombreArchivoBase?: string
+): string {
   // Enrich rows that might miss area/codigoMaquina in legacy saved shifts
   const maqMap = new Map<string, Maquina>();
   maquinasCatalogo.forEach((m) => {
@@ -1336,383 +1423,298 @@ export function imprimirTurnoFormatoExcel(
   const totalGen = filas.reduce((s, f) => s + (f.total || 0), 0);
   const mermaGen = filas.reduce((s, f) => s + (f.merma || 0), 0);
 
-  const bloquesAreas = AREAS_ORDEN.map((areaDef) => {
-    const filasDeArea = filas.filter((f) => (f.area || '') === areaDef.key);
-    if (filasDeArea.length === 0) return '';
+  const doc = new jsPDF({
+    orientation: 'landscape',
+    unit: 'mm',
+    format: 'a4',
+  });
 
-    let totalArea = 0;
-    let mermaArea = 0;
-    filasDeArea.forEach((f) => {
-      totalArea += f.total || 0;
-      mermaArea += f.merma || 0;
+  const pageWidth = 297;
+  const pageHeight = 210;
+  const marginX = 10;
+  const contentWidth = pageWidth - marginX * 2; // 277 mm
+
+  // Column widths summing strictly to 277 mm
+  const colWidths = [34, 22, 22, 22, 76, 28, 20, 53];
+  const colX: number[] = [];
+  let accX = marginX;
+  colWidths.forEach((w) => {
+    colX.push(accX);
+    accX += w;
+  });
+
+  const headers = [
+    'MÁQUINA',
+    'CÓDIGO MÁQ.',
+    "OP'S",
+    'SAP',
+    'PRODUCTO',
+    'TOTAL PROD.',
+    'MERMA',
+    'OBSERVACIONES',
+  ];
+
+  let y = 11;
+
+  const drawMainHeader = () => {
+    doc.setFillColor(18, 22, 31); // #12161F
+    doc.rect(marginX, y, contentWidth, 15.5, 'F');
+    doc.setFillColor(242, 169, 59); // #F2A93B
+    doc.rect(marginX, y, 3.5, 15.5, 'F');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.setTextColor(255, 255, 255);
+    doc.text(titulo, marginX + 6.5, y + 6.5);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.2);
+    doc.setTextColor(203, 213, 224);
+    doc.text(subtitulo, marginX + 6.5, y + 12);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(242, 169, 59);
+    const statsParts = [`Total: ${totalGen.toLocaleString('es-PE')} u`];
+    if (mermaGen > 0) statsParts.push(`Merma: ${mermaGen.toLocaleString('es-PE')} u`);
+    statsParts.push(`(${filas.length} filas)`);
+    doc.text(statsParts.join('  ·  '), marginX + contentWidth - 4, y + 9.2, {
+      align: 'right',
     });
 
-    // Build rows with vertical rowspan merging for consecutive identical machine names (matching Excel export)
-    let tbodyHtml = '';
-    let i = 0;
-    while (i < filasDeArea.length) {
-      let j = i;
-      const maqKey = (filasDeArea[i].maquina || '').trim().toLowerCase();
-      while (
-        j + 1 < filasDeArea.length &&
-        (filasDeArea[j + 1].maquina || '').trim().toLowerCase() === maqKey
-      ) {
-        j++;
-      }
-      const span = j - i + 1;
-      const rs = span > 1 ? ` rowspan="${span}"` : '';
+    y += 18;
+  };
 
-      for (let k = i; k <= j; k++) {
-        const f = filasDeArea[k];
-        tbodyHtml += '<tr>';
-        if (k === i) {
-          tbodyHtml += `<td${rs} class="maq-cell">${escapeHtml(f.maquina || '')}</td>`;
-          tbodyHtml += `<td${rs} class="cod-cell">${escapeHtml(f.codigoMaquina || '')}</td>`;
+  const drawAreaAndTableHeaders = (areaLabel: string, isContinuation = false) => {
+    doc.setFillColor(217, 119, 6); // #D97706
+    doc.setDrawColor(183, 183, 183);
+    doc.setLineWidth(0.2);
+    doc.rect(marginX, y, contentWidth, 6.2, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(255, 255, 255);
+    doc.text(
+      isContinuation ? `${areaLabel} (CONTINUACIÓN)` : areaLabel,
+      marginX + 3,
+      y + 4.2
+    );
+    y += 6.2;
+
+    doc.setFillColor(242, 242, 242); // #F2F2F2
+    doc.rect(marginX, y, contentWidth, 6.2, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.1);
+    doc.setTextColor(51, 51, 51);
+    headers.forEach((h, i) => {
+      doc.line(colX[i], y, colX[i], y + 6.2);
+      doc.text(h, colX[i] + colWidths[i] / 2, y + 4.2, { align: 'center' });
+    });
+    doc.line(marginX + contentWidth, y, marginX + contentWidth, y + 6.2);
+    y += 6.2;
+  };
+
+  drawMainHeader();
+
+  AREAS_ORDEN.forEach((areaDef) => {
+    const filasDeArea = filas.filter((f) => (f.area || '') === areaDef.key);
+    if (filasDeArea.length === 0) return;
+
+    const totalArea = filasDeArea.reduce((s, f) => s + (f.total || 0), 0);
+    const mermaArea = filasDeArea.reduce((s, f) => s + (f.merma || 0), 0);
+
+    if (y + 20 > pageHeight - 14) {
+      doc.addPage('a4', 'landscape');
+      y = 11;
+      drawMainHeader();
+    }
+
+    drawAreaAndTableHeaders(areaDef.label, false);
+
+    let prevMaqKey: string | null = null;
+
+    filasDeArea.forEach((f, idx) => {
+      const maqKey = (f.maquina || '').trim().toLowerCase();
+      const isSameAsPrev = prevMaqKey !== null && prevMaqKey === maqKey;
+      const nextIsSame =
+        idx + 1 < filasDeArea.length &&
+        (filasDeArea[idx + 1].maquina || '').trim().toLowerCase() === maqKey;
+
+      const values = [
+        isSameAsPrev ? '' : String(f.maquina || ''),
+        isSameAsPrev ? '' : String(f.codigoMaquina || ''),
+        String(f.op || ''),
+        String(f.sap || ''),
+        String(f.producto || ''),
+        (f.total || 0).toLocaleString('es-PE'),
+        (f.merma || 0).toLocaleString('es-PE'),
+        String(f.observaciones || ''),
+      ];
+
+      doc.setFontSize(7.2);
+      const wrappedLines = values.map((val, cIdx) => {
+        if (!val) return [''];
+        return doc.splitTextToSize(val, colWidths[cIdx] - 2.4) as string[];
+      });
+
+      const maxLines = Math.max(...wrappedLines.map((l) => l.length), 1);
+      const rowH = Math.max(5.5, maxLines * 3.2 + 2.2);
+
+      if (y + rowH > pageHeight - 14) {
+        doc.addPage('a4', 'landscape');
+        y = 11;
+        drawMainHeader();
+        drawAreaAndTableHeaders(areaDef.label, true);
+        // Reprint machine & code after page break
+        wrappedLines[0] = f.maquina
+          ? (doc.splitTextToSize(String(f.maquina), colWidths[0] - 2.4) as string[])
+          : [''];
+        wrappedLines[1] = f.codigoMaquina
+          ? (doc.splitTextToSize(String(f.codigoMaquina), colWidths[1] - 2.4) as string[])
+          : [''];
+      }
+
+      if (idx % 2 === 1) {
+        doc.setFillColor(250, 250, 250);
+        doc.rect(marginX, y, contentWidth, rowH, 'F');
+      }
+
+      doc.setDrawColor(183, 183, 183);
+      doc.setLineWidth(0.2);
+      colX.forEach((cx) => {
+        doc.line(cx, y, cx, y + rowH);
+      });
+      doc.line(marginX + contentWidth, y, marginX + contentWidth, y + rowH);
+
+      if (!nextIsSame) {
+        doc.line(marginX, y + rowH, marginX + contentWidth, y + rowH);
+      } else {
+        doc.line(colX[2], y + rowH, marginX + contentWidth, y + rowH);
+      }
+
+      wrappedLines.forEach((lines, cIdx) => {
+        if (lines.length === 1 && lines[0] === '') return;
+
+        if (cIdx === 0 || cIdx === 5) {
+          doc.setFont('helvetica', 'bold');
+        } else {
+          doc.setFont('helvetica', 'normal');
         }
-        tbodyHtml += `<td class="op-cell">${escapeHtml(f.op || '')}</td>`;
-        tbodyHtml += `<td class="sap-cell">${escapeHtml(f.sap || '')}</td>`;
-        tbodyHtml += `<td class="prod-cell">${escapeHtml(f.producto || '')}</td>`;
-        tbodyHtml += `<td class="num">${(f.total || 0).toLocaleString('es-PE')}</td>`;
-        tbodyHtml += `<td class="num merma">${(f.merma || 0).toLocaleString('es-PE')}</td>`;
-        tbodyHtml += `<td class="obs-cell">${escapeHtml(f.observaciones || '')}</td>`;
-        tbodyHtml += '</tr>';
-      }
-      i = j + 1;
+
+        if (cIdx === 6) {
+          doc.setTextColor(192, 57, 43); // #C0392B merma
+        } else if (cIdx === 5) {
+          doc.setTextColor(30, 64, 175); // #1E40AF total
+        } else {
+          doc.setTextColor(17, 24, 39);
+        }
+
+        const totalTextH = lines.length * 3.2;
+        let startTextY = y + (rowH - totalTextH) / 2 + 2.5;
+
+        lines.forEach((line) => {
+          if (cIdx === 1 || cIdx === 2 || cIdx === 3) {
+            doc.text(line, colX[cIdx] + colWidths[cIdx] / 2, startTextY, { align: 'center' });
+          } else if (cIdx === 5 || cIdx === 6) {
+            doc.text(line, colX[cIdx] + colWidths[cIdx] - 1.4, startTextY, { align: 'right' });
+          } else {
+            doc.text(line, colX[cIdx] + 1.4, startTextY);
+          }
+          startTextY += 3.2;
+        });
+      });
+
+      prevMaqKey = maqKey;
+      y += rowH;
+    });
+
+    // Area subtotal row (#FDEBD0)
+    if (y + 7 > pageHeight - 14) {
+      doc.addPage('a4', 'landscape');
+      y = 12;
     }
 
-    return `
-      <div class="area-block">
-        <div class="area-banner">${escapeHtml(areaDef.label)}</div>
-        <table>
-          <thead>
-            <tr>
-              <th style="width:13%">MÁQUINA</th>
-              <th style="width:9%">CÓDIGO MÁQ.</th>
-              <th style="width:9%">OP'S</th>
-              <th style="width:9%">SAP</th>
-              <th style="width:24%">PRODUCTO</th>
-              <th style="width:11%">TOTAL PROD.</th>
-              <th style="width:8%">MERMA</th>
-              <th style="width:17%">OBSERVACIONES</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${tbodyHtml}
-            <tr class="total-row">
-              <td colspan="5">TOTAL ${escapeHtml(areaDef.label)}</td>
-              <td class="num">${totalArea.toLocaleString('es-PE')}</td>
-              <td class="num merma">${mermaArea.toLocaleString('es-PE')}</td>
-              <td></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    `;
-  })
-    .filter(Boolean)
-    .join('');
+    doc.setFillColor(253, 235, 208);
+    doc.setDrawColor(183, 183, 183);
+    doc.setLineWidth(0.22);
+    doc.rect(marginX, y, contentWidth, 6.2, 'FD');
+    doc.line(colX[5], y, colX[5], y + 6.2);
+    doc.line(colX[6], y, colX[6], y + 6.2);
+    doc.line(colX[7], y, colX[7], y + 6.2);
 
-  const html = `<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <title>${escapeHtml(titulo)}</title>
-  <style>
-    @page {
-      size: A4 landscape;
-      margin: 5mm;
-    }
-    * {
-      box-sizing: border-box;
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-    }
-    html, body {
-      margin: 0;
-      padding: 0;
-      width: 285mm;
-      max-width: 285mm;
-      background: #ffffff;
-      font-family: Arial, Helvetica, sans-serif;
-      color: #111827;
-      font-size: 9.5px;
-    }
-    @media print {
-      html, body {
-        width: 285mm;
-        height: auto;
-        max-height: 192mm;
-        overflow: hidden !important;
-      }
-    }
-    #print-viewport {
-      width: 285mm;
-      overflow: hidden;
-      page-break-inside: avoid;
-      break-inside: avoid;
-      page-break-after: avoid;
-      break-after: avoid;
-    }
-    #sheet-content {
-      width: 285mm;
-      transform-origin: top left;
-    }
-    .title-banner {
-      background: #12161F;
-      color: #FFFFFF;
-      padding: 6px 10px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      border-bottom: 3px solid #F2A93B;
-      margin-bottom: 6px;
-    }
-    .title-main {
-      font-size: 13px;
-      font-weight: 700;
-      letter-spacing: 0.4px;
-      text-transform: uppercase;
-    }
-    .title-sub {
-      font-size: 9px;
-      color: #CBD5E0;
-      margin-top: 1px;
-    }
-    .title-stats {
-      text-align: right;
-      font-size: 10px;
-      white-space: nowrap;
-    }
-    .title-stats strong {
-      color: #F2A93B;
-      font-size: 11px;
-    }
-    .title-stats .merma-badge {
-      color: #FC8181;
-      font-weight: 700;
-      margin-left: 8px;
-    }
-    .area-block {
-      margin-bottom: 6px;
-    }
-    .area-banner {
-      background: #D97706;
-      color: #FFFFFF;
-      font-weight: 700;
-      font-size: 10px;
-      padding: 3px 7px;
-      letter-spacing: 0.4px;
-      border: 1px solid #B7B7B7;
-      border-bottom: none;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      table-layout: fixed;
-    }
-    th, td {
-      border: 1px solid #B7B7B7;
-      padding: 2.5px 4.5px;
-      vertical-align: middle;
-      word-wrap: break-word;
-      overflow-wrap: anywhere;
-      line-height: 1.2;
-    }
-    th {
-      background: #F2F2F2;
-      color: #333333;
-      font-weight: 700;
-      font-size: 8.5px;
-      text-align: center;
-    }
-    .maq-cell {
-      font-weight: 700;
-      background: #FAFAFA;
-    }
-    .cod-cell, .op-cell, .sap-cell {
-      font-family: 'Courier New', Courier, monospace;
-      text-align: center;
-      font-size: 9px;
-    }
-    .prod-cell, .obs-cell {
-      text-align: left;
-    }
-    .num {
-      text-align: right;
-      font-family: 'Courier New', Courier, monospace;
-      font-weight: 600;
-    }
-    .merma {
-      color: #C0392B;
-    }
-    .total-row td {
-      background: #FDEBD0;
-      font-weight: 700;
-      font-size: 9.5px;
-    }
-    .grand-total {
-      margin-top: 4px;
-      background: #12161F;
-      color: #FFFFFF;
-      padding: 5px 9px;
-      display: flex;
-      justify-content: space-between;
-      font-size: 10px;
-      font-weight: 700;
-      border-radius: 2px;
-    }
-    .grand-total span.val {
-      color: #F2A93B;
-      font-family: 'Courier New', Courier, monospace;
-    }
-    .grand-total span.merma-val {
-      color: #FC8181;
-      font-family: 'Courier New', Courier, monospace;
-      margin-left: 12px;
-    }
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(17, 24, 39);
+    doc.text(`TOTAL ${areaDef.label}`, marginX + 2.5, y + 4.2);
 
-    /* Compact density tiers applied automatically before scaling when needed */
-    #sheet-content.compact .title-banner { padding: 4px 8px; margin-bottom: 4px; }
-    #sheet-content.compact .title-main { font-size: 12px; }
-    #sheet-content.compact .area-block { margin-bottom: 4px; }
-    #sheet-content.compact .area-banner { padding: 2px 6px; font-size: 9.5px; }
-    #sheet-content.compact th,
-    #sheet-content.compact td { padding: 1.8px 3.5px; font-size: 8.8px; line-height: 1.15; }
-    #sheet-content.compact th { font-size: 8px; }
-    #sheet-content.compact .grand-total { padding: 4px 8px; font-size: 9px; margin-top: 3px; }
+    doc.setTextColor(30, 64, 175);
+    doc.text(totalArea.toLocaleString('es-PE'), colX[5] + colWidths[5] - 1.4, y + 4.2, {
+      align: 'right',
+    });
 
-    #sheet-content.ultra-compact .title-banner { padding: 3px 7px; margin-bottom: 3px; }
-    #sheet-content.ultra-compact .title-main { font-size: 11px; }
-    #sheet-content.ultra-compact .area-block { margin-bottom: 3px; }
-    #sheet-content.ultra-compact .area-banner { padding: 1.5px 5px; font-size: 9px; }
-    #sheet-content.ultra-compact th,
-    #sheet-content.ultra-compact td { padding: 1.2px 3px; font-size: 8.2px; line-height: 1.12; }
-    #sheet-content.ultra-compact th { font-size: 7.6px; }
-    #sheet-content.ultra-compact .grand-total { padding: 3px 7px; font-size: 8.5px; margin-top: 2px; }
-  </style>
-</head>
-<body>
-  <div id="mm-ruler" style="position:absolute;top:-9999px;left:0;width:100mm;height:100mm;visibility:hidden;pointer-events:none;"></div>
-  <div id="print-viewport">
-    <div id="sheet-content">
-      <div class="title-banner">
-        <div>
-          <div class="title-main">${escapeHtml(titulo)}</div>
-          <div class="title-sub">${escapeHtml(subtitulo)}</div>
-        </div>
-        <div class="title-stats">
-          Total: <strong>${totalGen.toLocaleString('es-PE')} u</strong>
-          ${mermaGen > 0 ? `<span class="merma-badge">Merma: ${mermaGen.toLocaleString('es-PE')} u</span>` : ''}
-          <span style="color:#A0AEC0;margin-left:8px;">(${filas.length} filas)</span>
-        </div>
-      </div>
-      ${bloquesAreas}
-      <div class="grand-total">
-        <span>RESUMEN GENERAL DEL TURNO (${filas.length} REGISTROS)</span>
-        <div>
-          TOTAL PRODUCIDO: <span class="val">${totalGen.toLocaleString('es-PE')} u</span>
-          <span class="merma-val">MERMA TOTAL: ${mermaGen.toLocaleString('es-PE')} u</span>
-        </div>
-      </div>
-    </div>
-  </div>
-</body>
-</html>`;
+    doc.setTextColor(192, 57, 43);
+    doc.text(mermaArea.toLocaleString('es-PE'), colX[6] + colWidths[6] - 1.4, y + 4.2, {
+      align: 'right',
+    });
 
-  // Render inside an off-screen A4-sized iframe so DOM height is accurately measured and scaled to 1 page
-  const iframe = document.createElement('iframe');
-  iframe.style.position = 'fixed';
-  iframe.style.left = '-12000px';
-  iframe.style.top = '0';
-  iframe.style.width = '1200px';
-  iframe.style.height = '900px';
-  iframe.style.border = '0';
-  iframe.style.opacity = '0';
-  iframe.style.pointerEvents = 'none';
-  iframe.setAttribute('aria-hidden', 'true');
-  document.body.appendChild(iframe);
+    y += 9;
+  });
 
-  const doc = iframe.contentWindow?.document;
-  if (!doc || !iframe.contentWindow) {
-    document.body.removeChild(iframe);
-    return;
+  // Grand Total Summary Banner (#12161F)
+  if (y + 10 > pageHeight - 13) {
+    doc.addPage('a4', 'landscape');
+    y = 12;
   }
 
-  doc.open();
-  doc.write(html);
-  doc.close();
+  doc.setFillColor(18, 22, 31);
+  doc.rect(marginX, y, contentWidth, 7.5, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(255, 255, 255);
+  doc.text(`RESUMEN GENERAL DEL TURNO (${filas.length} REGISTROS)`, marginX + 3, y + 5);
 
-  const fitSingleLandscapePage = () => {
-    const ruler = doc.getElementById('mm-ruler');
-    const viewport = doc.getElementById('print-viewport');
-    const content = doc.getElementById('sheet-content');
-    if (!ruler || !viewport || !content) return;
+  doc.setTextColor(242, 169, 59);
+  const grandRight = `TOTAL PRODUCIDO: ${totalGen.toLocaleString('es-PE')} u   ·   MERMA TOTAL: ${mermaGen.toLocaleString('es-PE')} u`;
+  doc.text(grandRight, marginX + contentWidth - 3, y + 5, { align: 'right' });
 
-    const rulerRect = ruler.getBoundingClientRect();
-    const pxPerMm = rulerRect.height > 0 ? rulerRect.height / 100 : 3.7795275591;
-    const widthMm = 285;
-    const maxHeightMm = 190; // Safe single-page budget inside 210mm A4 height with 5mm top/bottom margins
-    const maxH = maxHeightMm * pxPerMm;
+  // Page footer on all pages
+  const totalPages = (doc as any).internal.getNumberOfPages();
+  const generado = new Date().toLocaleString('es-PE', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 
-    content.style.width = `${widthMm}mm`;
+  for (let p = 1; p <= totalPages; p++) {
+    doc.setPage(p);
+    doc.setDrawColor(203, 213, 224);
+    doc.setLineWidth(0.2);
+    doc.line(marginX, pageHeight - 10, marginX + contentWidth, pageHeight - 10);
 
-    // 1) Try compact density tiers before applying geometric transform scaling
-    if (content.scrollHeight > maxH) {
-      content.classList.add('compact');
-    }
-    if (content.scrollHeight > maxH * 1.18) {
-      content.classList.add('ultra-compact');
-    }
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Generado: ${generado}  ·  Reporte de Producción`, marginX, pageHeight - 6.2);
+    doc.text(`Página ${p} de ${totalPages}`, marginX + contentWidth, pageHeight - 6.2, {
+      align: 'right',
+    });
+  }
 
-    // 2) If content still exceeds single-page height, solve optimal scale via binary search:
-    // widening virtual width to (285 / scale)mm prevents narrow wrapping while uniform scale keeps full width & <=190mm height
-    let bestScale = 1;
-    if (content.scrollHeight > maxH) {
-      let low = 0.25;
-      let high = 1.0;
-      bestScale = 0.25;
+  const baseClean = (
+    nombreArchivoBase ||
+    titulo
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/gi, '_')
+      .replace(/^_+|_+$/g, '') ||
+    'reporte_turno'
+  ).replace(/\.pdf$/i, '');
+  const nombreArchivo = `${baseClean}.pdf`;
 
-      for (let step = 0; step < 14; step++) {
-        const mid = (low + high) / 2;
-        content.style.width = `${(widthMm / mid).toFixed(3)}mm`;
-        const h = content.scrollHeight;
-        if (h * mid <= maxH * 0.985) {
-          bestScale = mid;
-          low = mid;
-        } else {
-          high = mid;
-        }
-      }
-
-      content.style.width = `${(widthMm / bestScale).toFixed(3)}mm`;
-      content.style.transform = `scale(${bestScale.toFixed(5)})`;
-      content.style.transformOrigin = 'top left';
-    }
-
-    const scaledHeightMm = Math.min(maxHeightMm, (content.scrollHeight / pxPerMm) * bestScale + 0.5);
-    viewport.style.width = `${widthMm}mm`;
-    viewport.style.height = `${scaledHeightMm.toFixed(2)}mm`;
-    viewport.style.overflow = 'hidden';
-
-    ruler.remove();
-  };
-
-  const cleanup = () => {
-    if (iframe.parentNode) {
-      iframe.parentNode.removeChild(iframe);
-    }
-  };
-
-  iframe.contentWindow.addEventListener('afterprint', cleanup, { once: true });
-  setTimeout(() => {
-    try {
-      fitSingleLandscapePage();
-      iframe.contentWindow?.focus();
-      iframe.contentWindow?.print();
-    } finally {
-      setTimeout(cleanup, 60000);
-    }
-  }, 180);
+  doc.save(nombreArchivo);
+  return nombreArchivo;
 }
 
 // ----------------- ACTIVACION EXCEL & PDF -----------------

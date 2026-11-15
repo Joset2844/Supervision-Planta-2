@@ -742,3 +742,209 @@ export async function consultarHistorialMaquina(params: {
   };
 }
 
+export interface AvanceOpResult {
+  anterior: number;
+  actual: number;
+  acumulado: number;
+  meta: number;
+  pct: number;
+  restante: number;
+  esPorModelo: boolean;
+  alcance: 'pt' | 'pp' | 'sin_tipo';
+  nubeUsada: boolean;
+}
+
+export async function cargarTurnosNubeSnapshot(
+  session: SupabaseSession | null
+): Promise<{ dbRows: TurnoDBRow[]; nubeDisponible: boolean }> {
+  const cfg = getSupabaseConfig(false);
+  if (!cfg) return { dbRows: [], nubeDisponible: false };
+  try {
+    const res = await sbFetch<TurnoDBRow[]>(
+      cfg,
+      'turnos?select=fecha,tipo,filas&order=fecha.desc,tipo.asc&limit=500',
+      undefined,
+      session
+    );
+    if (Array.isArray(res)) {
+      return { dbRows: res, nubeDisponible: true };
+    }
+  } catch {
+    // Fallback gracefully to local history only
+  }
+  return { dbRows: [], nubeDisponible: false };
+}
+
+function limpiarSufijoPliego(texto: string): string {
+  return (texto || '')
+    .replace(/\s*-\s*(?:Pliego\s*\d+|Tira|Retira)$/i, '')
+    .trim();
+}
+
+export function calcularAvanceOpEnTarjeta(params: {
+  op: string;
+  modeloIdx: number;
+  maquina: Maquina;
+  catalogMatch: CatalogoItem | null;
+  dbRows: TurnoDBRow[];
+  nubeDisponible: boolean;
+  historial: HistorialTurnoLocal[];
+  turno: TurnoMaquina[];
+  metaTurno: MetaTurno;
+  maquinas: Maquina[];
+}): AvanceOpResult | null {
+  const {
+    op,
+    modeloIdx,
+    maquina,
+    catalogMatch,
+    dbRows,
+    nubeDisponible,
+    historial,
+    turno,
+    metaTurno,
+    maquinas,
+  } = params;
+
+  const opClean = (op || '').trim();
+  if (!opClean || !catalogMatch) return null;
+
+  const mod =
+    modeloIdx >= 0 && catalogMatch.modelos && catalogMatch.modelos[modeloIdx]
+      ? catalogMatch.modelos[modeloIdx]
+      : null;
+  const metaModelo = Number(mod?.cantidadTotal || 0);
+  const metaOrden = Number(catalogMatch.cantidadTotal || 0);
+  const esPorModelo = metaModelo > 0;
+  const meta = esPorModelo ? metaModelo : metaOrden;
+
+  if (!meta || meta <= 0) return null;
+
+  const alcance: 'pt' | 'pp' | 'sin_tipo' =
+    maquina.tipoProducto === 'pp' ? 'pp' : maquina.tipoProducto === 'pt' ? 'pt' : 'sin_tipo';
+
+  const maqTipoMap = buildMaqTipoMap(maquinas);
+  const currentFecha = (metaTurno.fecha || '').trim();
+  const currentTipo = (metaTurno.tipo || '').trim().toLowerCase();
+
+  const coincideModelo = (sapRaw?: string, prodRaw?: string): boolean => {
+    if (!esPorModelo || !mod) return true;
+    const modSap = (mod.sap || '').trim().toLowerCase();
+    const rSap = (sapRaw || '').trim().toLowerCase();
+    if (modSap && rSap && modSap === rSap) return true;
+
+    const modDesc = (mod.descripcion || '').trim().toLowerCase();
+    const modCorto = (mod.modelo || '').trim().toLowerCase();
+    const rProd = limpiarSufijoPliego(prodRaw || '').toLowerCase();
+    if (!rProd) return false;
+    if (modDesc && (rProd === modDesc || rProd.includes(modDesc) || modDesc.includes(rProd))) {
+      return true;
+    }
+    if (modCorto && (rProd === modCorto || rProd.includes(modCorto))) {
+      return true;
+    }
+    return false;
+  };
+
+  const coincideAlcanceFila = (
+    rawTipo?: string,
+    nombreMaq?: string,
+    codMaq?: string
+  ): boolean => {
+    const tipoRes = resolverTipo(maqTipoMap, rawTipo, nombreMaq, codMaq);
+    if (alcance === 'pp') {
+      // PP separado estrictamente por máquina
+      return tipoRes === 'pp' && maquinaCoincide({ maquina: nombreMaq, codigoMaquina: codMaq }, maquina);
+    }
+    if (alcance === 'pt') {
+      // PT suma únicamente producción terminada (PT)
+      return tipoRes === 'pt';
+    }
+    // Sin tipo definido en la máquina: suma solo registros de esta misma máquina que no sean PP de otra
+    return maquinaCoincide({ maquina: nombreMaq, codigoMaquina: codMaq }, maquina);
+  };
+
+  // 1. Sumar turnos anteriores deduplicados (nube primero, luego local)
+  const vistos = new Set<string>();
+  let anterior = 0;
+
+  dbRows.forEach((rec) => {
+    const fFecha = (rec.fecha || '').trim();
+    const fTipo = (rec.tipo || '').trim().toLowerCase();
+    if (currentFecha && currentTipo && fFecha === currentFecha && fTipo === currentTipo) {
+      return;
+    }
+    const key = `${fFecha}|${fTipo}`;
+    vistos.add(key);
+
+    (rec.filas || []).forEach((f) => {
+      if (!opCoincide(f.op, opClean)) return;
+      if (!coincideAlcanceFila(f.tipoProducto, f.maquina, f.codigoMaquina)) return;
+      if (!coincideModelo(f.sap, f.producto)) return;
+      anterior += Number(f.total) || 0;
+    });
+  });
+
+  (historial || []).forEach((h) => {
+    const fFecha = (h.fechaTurno || (h.fecha ? h.fecha.slice(0, 10) : '')).trim();
+    const fTipo = (h.tipoTurno || '').trim().toLowerCase();
+    if (!fFecha) return;
+    if (currentFecha && currentTipo && fFecha === currentFecha && fTipo === currentTipo) {
+      return;
+    }
+    const key = `${fFecha}|${fTipo}`;
+    if (vistos.has(key)) return;
+    vistos.add(key);
+
+    (h.filas || []).forEach((f) => {
+      if (!opCoincide(f.op, opClean)) return;
+      if (!coincideAlcanceFila(f.tipoProducto, f.maquina, f.codigoMaquina)) return;
+      if (!coincideModelo(f.sap, f.producto)) return;
+      anterior += Number(f.total) || 0;
+    });
+  });
+
+  // 2. Sumar producción en vivo del turno actual
+  let actual = 0;
+  (turno || []).forEach((t) => {
+    const m = maquinas.find((x) => x.id === t.maquinaId);
+    if (!m) return;
+    if (alcance === 'pp') {
+      if (m.id !== maquina.id && !maquinaCoincide({ maquina: m.nombre, codigoMaquina: m.codigo }, maquina)) {
+        return;
+      }
+      if (m.tipoProducto !== 'pp') return;
+    } else if (alcance === 'pt') {
+      if (m.tipoProducto !== 'pt') return;
+    } else {
+      if (m.id !== maquina.id && !maquinaCoincide({ maquina: m.nombre, codigoMaquina: m.codigo }, maquina)) {
+        return;
+      }
+    }
+
+    (t.registros || []).forEach((r) => {
+      const regOp = (r.op || t.op || '').trim();
+      if (!opCoincide(regOp, opClean)) return;
+      if (!coincideModelo(r.sap, r.descripcion)) return;
+      actual += Number(r.cantidad) || 0;
+    });
+  });
+
+  const acumulado = anterior + actual;
+  const pct = meta > 0 ? (acumulado / meta) * 100 : 0;
+  const restante = meta - acumulado;
+
+  return {
+    anterior,
+    actual,
+    acumulado,
+    meta,
+    pct,
+    restante,
+    esPorModelo,
+    alcance,
+    nubeUsada: nubeDisponible,
+  };
+}
+
+

@@ -38,6 +38,9 @@ interface AppContextType {
   setSubTabInventario: (tab: 'agregar' | 'consultar') => void;
   subTabHistorial: 'turnos' | 'buscar_op' | 'buscar_maquina';
   setSubTabHistorial: (tab: 'turnos' | 'buscar_op' | 'buscar_maquina') => void;
+  opPreseleccionadaHistorial: string;
+  setOpPreseleccionadaHistorial: React.Dispatch<React.SetStateAction<string>>;
+  irAHistorialOp: (op: string) => void;
 
   catalogo: CatalogoItem[];
   setCatalogo: React.Dispatch<React.SetStateAction<CatalogoItem[]>>;
@@ -88,6 +91,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [activeTab, setActiveTab] = useState<'inventario' | 'maquinas' | 'produccion' | 'resumen' | 'historialdb'>('inventario');
   const [subTabInventario, setSubTabInventario] = useState<'agregar' | 'consultar'>('agregar');
   const [subTabHistorial, setSubTabHistorial] = useState<'turnos' | 'buscar_op' | 'buscar_maquina'>('turnos');
+  const [opPreseleccionadaHistorial, setOpPreseleccionadaHistorial] = useState('');
+
+  const irAHistorialOp = useCallback((op: string) => {
+    const limpia = (op || '').trim();
+    if (!limpia) return;
+    setOpPreseleccionadaHistorial(limpia);
+    setSubTabHistorial('buscar_op');
+    setActiveTab('historialdb');
+  }, []);
 
   const [catalogo, setCatalogoState] = useState<CatalogoItem[]>([]);
   const [lista, setListaState] = useState<ListaItem[]>([]);
@@ -543,6 +555,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setSubTabInventario,
         subTabHistorial,
         setSubTabHistorial,
+        opPreseleccionadaHistorial,
+        setOpPreseleccionadaHistorial,
+        irAHistorialOp,
         catalogo,
         setCatalogo,
         lista,

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Odometer } from '../common/Odometer';
-import { Plus, RefreshCw, Upload, Check, Copy, Trash2, Search, X, RotateCcw, Download, Printer } from 'lucide-react';
+import { Plus, RefreshCw, Upload, Check, Copy, Trash2, Search, X, RotateCcw, Download, Printer, Pencil, History } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import {
   procesarWorkbookCatalogo,
@@ -20,6 +20,8 @@ export const InventarioView: React.FC = () => {
     lista,
     setLista,
     subTabInventario,
+    setSubTabInventario,
+    irAHistorialOp,
     showToast,
     session,
     sincronizarCatalogoSupabase,
@@ -46,6 +48,14 @@ export const InventarioView: React.FC = () => {
 
   // Search state for Consultar
   const [buscarQuery, setBuscarQuery] = useState('');
+
+  // Inline edit state for pending list items
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDescripcion, setEditDescripcion] = useState('');
+  const [editTipoEmpaque, setEditTipoEmpaque] = useState<'caja' | 'paquete'>('caja');
+  const [editUnidades, setEditUnidades] = useState('');
+  const [editCajas, setEditCajas] = useState('');
+  const [editObservacion, setEditObservacion] = useState('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -214,11 +224,70 @@ export const InventarioView: React.FC = () => {
       showToast('error', 'No hay líneas en la lista para imprimir');
       return;
     }
-    imprimirInventarioFormatoExcel(lista, catalogo);
+    const archivo = imprimirInventarioFormatoExcel(lista, catalogo);
+    if (archivo) showToast('ok', `PDF generado: ${archivo}`);
   };
 
   const handleEliminarItem = (id: string) => {
+    if (editingId === id) setEditingId(null);
     setLista((prev) => prev.filter((i) => i.id !== id));
+  };
+
+  const handleIniciarEdicion = (item: ListaItem) => {
+    setEditingId(item.id);
+    setEditDescripcion(item.descripcion || '');
+    setEditTipoEmpaque(item.tipoEmpaque === 'paquete' ? 'paquete' : 'caja');
+    setEditUnidades(String(item.unidadesXCaja || ''));
+    setEditCajas(String(item.cantidadCajas || ''));
+    setEditObservacion(item.observacion || '');
+  };
+
+  const handleCancelarEdicion = () => {
+    setEditingId(null);
+  };
+
+  const handleGuardarEdicion = (id: string) => {
+    const u = parseInt(editUnidades, 10);
+    const c = parseInt(editCajas, 10);
+    if (isNaN(u) || isNaN(c) || u <= 0 || c <= 0) {
+      showToast('error', `Las unidades y la cantidad de ${editTipoEmpaque}s deben ser mayores a 0`);
+      return;
+    }
+    setLista((prev) =>
+      prev.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              descripcion: editDescripcion.trim() || item.descripcion,
+              tipoEmpaque: editTipoEmpaque,
+              unidadesXCaja: u,
+              cantidadCajas: c,
+              totalUnidades: u * c,
+              observacion: editObservacion.trim(),
+            }
+          : item
+      )
+    );
+    setEditingId(null);
+    showToast('ok', 'Línea actualizada');
+  };
+
+  const cargarOpEnRegistro = (item: CatalogoItem, modeloIdx = -1) => {
+    setOpInput(item.op);
+    setModeloSeleccionado(modeloIdx);
+    const mod = resolverModelo(item, modeloIdx);
+    setDescInput(mod.descripcion);
+    setClienteInput(item.cliente);
+    setUnidadesInput('');
+    setCajasInput('');
+    setObservacionInput('');
+    setShowSuggestions(false);
+    setSubTabInventario('agregar');
+    showToast('ok', `OP ${item.op} cargada para registrar`);
+    setTimeout(() => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      document.getElementById('inventario-unidades-input')?.focus();
+    }, 80);
   };
 
   const handleVaciarLista = () => {
@@ -868,6 +937,147 @@ export const InventarioView: React.FC = () => {
                   const singular = item.tipoEmpaque === 'paquete' ? 'paquete' : 'caja';
                   const plural = item.tipoEmpaque === 'paquete' ? 'paquetes' : 'cajas';
                   const empaqueTxt = item.cantidadCajas === 1 ? singular : plural;
+                  const estaEditando = editingId === item.id;
+                  const editPreviewTotal =
+                    (parseInt(editUnidades, 10) || 0) * (parseInt(editCajas, 10) || 0);
+
+                  if (estaEditando) {
+                    return (
+                      <div
+                        key={item.id}
+                        className="bg-[#232A38] border border-[#F2A93B] rounded-xl p-2.5 sm:p-3 space-y-2 shadow-md"
+                      >
+                        <div className="flex items-center justify-between gap-2 pb-1 border-b border-[#2D3748]">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] font-bold text-[#12161F] font-['IBM_Plex_Mono',monospace] bg-[#F2A93B] px-1.5 py-0.5 rounded">
+                              #{lineaNum}
+                            </span>
+                            <span className="text-[10px] font-bold bg-[#3A2E1B] text-[#F6AD55] py-0.5 px-1.5 rounded border border-[#F2A93B]/30 font-['IBM_Plex_Mono',monospace]">
+                              {item.op}
+                            </span>
+                            <span className="text-[11px] text-[#CBD5E0] font-medium truncate">
+                              {item.cliente}
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-bold uppercase text-[#F6AD55] tracking-wider">
+                            Editando línea
+                          </span>
+                        </div>
+
+                        <div>
+                          <label className="block text-[9.5px] font-semibold text-[#A0AEC0] uppercase mb-0.5">
+                            Descripción / Modelo
+                          </label>
+                          <input
+                            type="text"
+                            value={editDescripcion}
+                            onChange={(e) => setEditDescripcion(e.target.value)}
+                            className="w-full py-1 px-2 rounded-lg border border-[#4A5568] bg-[#1A202C] text-xs text-white outline-none focus:border-[#F2A93B]"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <div>
+                            <label className="block text-[9.5px] font-semibold text-[#A0AEC0] uppercase mb-0.5">
+                              Empaque
+                            </label>
+                            <div className="grid grid-cols-2 gap-1 p-0.5 bg-[#1A202C] rounded-lg border border-[#4A5568]">
+                              <button
+                                type="button"
+                                onClick={() => setEditTipoEmpaque('caja')}
+                                className={`py-1 rounded text-[11px] font-bold cursor-pointer ${
+                                  editTipoEmpaque === 'caja'
+                                    ? 'bg-[#F2A93B] text-[#12161F]'
+                                    : 'text-[#CBD5E0]'
+                                }`}
+                              >
+                                Cajas
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditTipoEmpaque('paquete')}
+                                className={`py-1 rounded text-[11px] font-bold cursor-pointer ${
+                                  editTipoEmpaque === 'paquete'
+                                    ? 'bg-[#F2A93B] text-[#12161F]'
+                                    : 'text-[#CBD5E0]'
+                                }`}
+                              >
+                                Paquetes
+                              </button>
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="block text-[9.5px] font-semibold text-[#A0AEC0] uppercase mb-0.5">
+                              Unid. x {editTipoEmpaque}
+                            </label>
+                            <input
+                              type="number"
+                              inputMode="numeric"
+                              min="1"
+                              value={editUnidades}
+                              onChange={(e) => setEditUnidades(e.target.value)}
+                              className="w-full py-1 px-2 rounded-lg border border-[#4A5568] bg-[#1A202C] text-xs font-['IBM_Plex_Mono',monospace] text-white outline-none focus:border-[#F2A93B]"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[9.5px] font-semibold text-[#A0AEC0] uppercase mb-0.5">
+                              Cant. {editTipoEmpaque}s
+                            </label>
+                            <input
+                              type="number"
+                              inputMode="numeric"
+                              min="1"
+                              value={editCajas}
+                              onChange={(e) => setEditCajas(e.target.value)}
+                              className="w-full py-1 px-2 rounded-lg border border-[#4A5568] bg-[#1A202C] text-xs font-['IBM_Plex_Mono',monospace] text-white outline-none focus:border-[#F2A93B]"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[9.5px] font-semibold text-[#A0AEC0] uppercase mb-0.5">
+                            Observación
+                          </label>
+                          <input
+                            type="text"
+                            value={editObservacion}
+                            onChange={(e) => setEditObservacion(e.target.value)}
+                            placeholder="Opcional..."
+                            className="w-full py-1 px-2 rounded-lg border border-[#4A5568] bg-[#1A202C] text-xs text-white outline-none focus:border-[#F2A93B]"
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2 pt-1 border-t border-[#2D3748]">
+                          <div className="text-xs text-[#CBD5E0]">
+                            Nuevo total:{' '}
+                            <strong className="text-[#F2A93B] font-['IBM_Plex_Mono',monospace] tabular-nums">
+                              {editPreviewTotal.toLocaleString('es-PE')} u
+                            </strong>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={handleCancelarEdicion}
+                              className="flex items-center gap-1 py-1 px-2.5 rounded-lg border border-[#4A5568] bg-[#1A202C] text-[#CBD5E0] hover:text-white text-xs font-semibold cursor-pointer"
+                            >
+                              <X size={13} />
+                              <span>Cancelar</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleGuardarEdicion(item.id)}
+                              className="flex items-center gap-1 py-1 px-3 rounded-lg bg-[#38A169] hover:brightness-110 text-white text-xs font-bold cursor-pointer"
+                            >
+                              <Check size={13} />
+                              <span>Guardar</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
 
                   return (
                     <div
@@ -906,15 +1116,26 @@ export const InventarioView: React.FC = () => {
                           </div>
                         )}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => handleEliminarItem(item.id)}
-                        className="shrink-0 p-1.5 text-[#E53E3E] hover:bg-[#E53E3E]/20 active:bg-[#E53E3E]/30 rounded-lg cursor-pointer transition-colors w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center"
-                        title="Eliminar pieza"
-                        aria-label="Eliminar pieza"
-                      >
-                        <Trash2 size={15} />
-                      </button>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleIniciarEdicion(item)}
+                          className="p-1.5 text-[#93C5FD] hover:bg-[#2B6CB0]/25 active:bg-[#2B6CB0]/40 rounded-lg cursor-pointer transition-colors w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center"
+                          title="Editar línea"
+                          aria-label="Editar línea"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleEliminarItem(item.id)}
+                          className="p-1.5 text-[#E53E3E] hover:bg-[#E53E3E]/20 active:bg-[#E53E3E]/30 rounded-lg cursor-pointer transition-colors w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center"
+                          title="Eliminar pieza"
+                          aria-label="Eliminar pieza"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
@@ -977,7 +1198,25 @@ export const InventarioView: React.FC = () => {
                             </span>
                           )}
                         </div>
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1 flex-wrap justify-end">
+                          <button
+                            type="button"
+                            onClick={() => cargarOpEnRegistro(r)}
+                            title="Cargar OP en Registrar / Agregar"
+                            className="bg-[#F2A93B] text-[#12161F] rounded-md px-2 py-1 text-[10px] font-bold flex items-center gap-1 cursor-pointer hover:brightness-110 active:scale-95"
+                          >
+                            <Plus size={12} />
+                            <span>Registrar</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => irAHistorialOp(r.op)}
+                            title="Ver producción acumulada de esta OP en Historial"
+                            className="bg-[#2B6CB0]/30 border border-[#63B3ED]/40 text-[#93C5FD] rounded-md px-2 py-1 text-[10px] font-bold flex items-center gap-1 cursor-pointer hover:bg-[#2B6CB0]/50 active:scale-95"
+                          >
+                            <History size={12} />
+                            <span>Historial</span>
+                          </button>
                           <button
                             type="button"
                             onClick={() => copiarInfoOp(r)}
@@ -1030,6 +1269,15 @@ export const InventarioView: React.FC = () => {
                                     {mo.sap && (
                                       <span className="font-['IBM_Plex_Mono',monospace] text-[#A0AEC0]"> · SAP {mo.sap}</span>
                                     )}
+                                    <button
+                                      type="button"
+                                      onClick={() => cargarOpEnRegistro(r, i)}
+                                      title={`Registrar modelo: ${mo.descripcion}`}
+                                      className="inline-flex items-center gap-0.5 bg-[#3A2E1B] text-[#F6AD55] border border-[#F2A93B]/40 rounded px-1.5 py-0.2 text-[9.5px] font-bold cursor-pointer hover:bg-[#F2A93B] hover:text-[#12161F]"
+                                    >
+                                      <Plus size={10} />
+                                      <span>Reg.</span>
+                                    </button>
                                   </div>
                                 </div>
                               </li>
@@ -1092,6 +1340,24 @@ export const InventarioView: React.FC = () => {
                               <div className="flex gap-1 justify-end items-center">
                                 <button
                                   type="button"
+                                  onClick={() => cargarOpEnRegistro(r)}
+                                  title="Cargar OP en Registrar / Agregar"
+                                  className="bg-[#F2A93B] text-[#12161F] rounded-md py-1 px-2 text-[10.5px] font-bold flex items-center gap-1 whitespace-nowrap cursor-pointer hover:brightness-110 transition-colors"
+                                >
+                                  <Plus size={12} />
+                                  <span>Registrar</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => irAHistorialOp(r.op)}
+                                  title="Ver historial de producción de esta OP"
+                                  className="bg-[#2B6CB0]/25 border border-[#63B3ED]/40 text-[#93C5FD] rounded-md py-1 px-2 text-[10.5px] font-bold flex items-center gap-1 whitespace-nowrap cursor-pointer hover:bg-[#2B6CB0]/45 transition-colors"
+                                >
+                                  <History size={12} />
+                                  <span>Historial</span>
+                                </button>
+                                <button
+                                  type="button"
                                   onClick={() => copiarInfoOp(r)}
                                   title="Copiar OP, Descripción y Cliente"
                                   className="bg-[#232A38] border border-[#4A5568] text-[#CBD5E0] hover:text-white rounded-md p-1.5 cursor-pointer transition-colors"
@@ -1133,6 +1399,15 @@ export const InventarioView: React.FC = () => {
                                           <span className="font-['IBM_Plex_Mono',monospace] text-[#A0AEC0]">{mo.sap}</span>
                                         </>
                                       )}
+                                      <button
+                                        type="button"
+                                        onClick={() => cargarOpEnRegistro(r, i)}
+                                        title={`Registrar modelo: ${mo.descripcion}`}
+                                        className="ml-2 inline-flex items-center gap-0.5 bg-[#3A2E1B] text-[#F6AD55] border border-[#F2A93B]/40 rounded px-1.5 py-0.2 text-[10px] font-bold cursor-pointer hover:bg-[#F2A93B] hover:text-[#12161F] transition-colors"
+                                      >
+                                        <Plus size={10} />
+                                        <span>Registrar modelo</span>
+                                      </button>
                                     </li>
                                   ))}
                                 </ul>

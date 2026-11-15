@@ -38,9 +38,10 @@ import {
 } from '../../services/excel';
 import { exportarPdfEficienciaVasosDesdeFilas } from '../../services/pdfEficiencia';
 import { TurnoDBRow, FilaTurnoExcel } from '../../types';
+import { HistorialOpTab } from './HistorialOpTab';
 
 export const HistorialDBView: React.FC = () => {
-  const { session, setSession, showToast, catalogo, maquinas } = useApp();
+  const { session, setSession, showToast, catalogo, maquinas, subTabHistorial } = useApp();
 
   // Login form (unauthenticated screen is strictly login-only)
   const [hdbUser, setHdbUser] = useState('');
@@ -635,6 +636,11 @@ export const HistorialDBView: React.FC = () => {
       setProcesandoConfirmModal(false);
     }
   };
+
+  // Consult OP sub-tab (matching Inventario subtabs behavior)
+  if (subTabHistorial === 'buscar_op') {
+    return <HistorialOpTab />;
+  }
 
   // If not logged in: strictly login-only (account creation is hidden from public view and restricted to Admin)
   if (!session) {

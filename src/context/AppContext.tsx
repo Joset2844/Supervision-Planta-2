@@ -36,6 +36,8 @@ interface AppContextType {
   setActiveTab: (tab: 'inventario' | 'maquinas' | 'produccion' | 'resumen' | 'historialdb') => void;
   subTabInventario: 'agregar' | 'consultar';
   setSubTabInventario: (tab: 'agregar' | 'consultar') => void;
+  subTabHistorial: 'turnos' | 'buscar_op';
+  setSubTabHistorial: (tab: 'turnos' | 'buscar_op') => void;
 
   catalogo: CatalogoItem[];
   setCatalogo: React.Dispatch<React.SetStateAction<CatalogoItem[]>>;
@@ -85,6 +87,7 @@ function canon(o: any): string {
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [activeTab, setActiveTab] = useState<'inventario' | 'maquinas' | 'produccion' | 'resumen' | 'historialdb'>('inventario');
   const [subTabInventario, setSubTabInventario] = useState<'agregar' | 'consultar'>('agregar');
+  const [subTabHistorial, setSubTabHistorial] = useState<'turnos' | 'buscar_op'>('turnos');
 
   const [catalogo, setCatalogoState] = useState<CatalogoItem[]>([]);
   const [lista, setListaState] = useState<ListaItem[]>([]);
@@ -538,6 +541,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setActiveTab,
         subTabInventario,
         setSubTabInventario,
+        subTabHistorial,
+        setSubTabHistorial,
         catalogo,
         setCatalogo,
         lista,

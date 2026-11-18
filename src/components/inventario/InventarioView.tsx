@@ -331,7 +331,7 @@ export const InventarioView: React.FC = () => {
   const handleActualizarCatalogo = async () => {
     setActualizando(true);
     try {
-      const n = await sincronizarCatalogoSupabase();
+      const n = await sincronizarCatalogoSupabase(true);
       showToast('ok', n ? `Catálogo actualizado: ${n} OP nuevas/modificadas` : 'Catálogo al día');
     } catch {
       showToast('error', 'No se pudo actualizar el catálogo. Revisa tu conexión.');

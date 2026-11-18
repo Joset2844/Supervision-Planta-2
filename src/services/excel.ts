@@ -40,16 +40,92 @@ export function etiquetaPliego(p: any): string {
   return 'Pliego ' + p;
 }
 
+function opDigits(op: any): string {
+  return String(op || '').replace(/\D/g, '');
+}
+
+function opDigitsSinCeros(op: any): string {
+  const d = opDigits(op).replace(/^0+/, '');
+  return d || opDigits(op);
+}
+
+export function normalizarCatalogoItem(raw: any): CatalogoItem | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const opStr = String(raw.op ?? '').trim();
+  if (!opStr) return null;
+
+  const rawModelos = Array.isArray(raw.modelos) ? raw.modelos : [];
+  const modelos: CatalogoModelo[] = rawModelos
+    .filter((m: any) => m && typeof m === 'object')
+    .map((m: any) => {
+      const cant = parsearCantidad(m.cantidadTotal);
+      return {
+        ...(m.modelo ? { modelo: String(m.modelo).trim() } : {}),
+        descripcion: String(m.descripcion || m.modelo || '').trim(),
+        sap: String(m.sap || '').trim(),
+        cantidadTotal: cant,
+      };
+    });
+
+  if (modelos.length === 0) {
+    modelos.push({
+      descripcion: String(raw.descripcion || '').trim(),
+      sap: String(raw.sap || '').trim(),
+      cantidadTotal: parsearCantidad(raw.cantidadTotal),
+    });
+  }
+
+  let totalOp = parsearCantidad(raw.cantidadTotal);
+  const sumModelos = modelos.reduce((acc, m) => acc + parsearCantidad(m.cantidadTotal), 0);
+  if (sumModelos > 0) {
+    totalOp = sumModelos;
+  }
+
+  const tieneMultiples = modelos.length > 1;
+  const descripcionBase =
+    String(raw.descripcionBase || '').trim() ||
+    modelos[0]?.descripcion ||
+    String(raw.descripcion || '').trim();
+
+  return {
+    op: opStr,
+    cliente: String(raw.cliente || '').trim(),
+    cantidadTotal: totalOp,
+    descripcion: tieneMultiples
+      ? `Varios modelos (${modelos.length})`
+      : modelos[0]?.descripcion || String(raw.descripcion || '').trim(),
+    sap: tieneMultiples ? '' : modelos[0]?.sap || String(raw.sap || '').trim(),
+    descripcionBase,
+    modelos,
+  };
+}
+
 export function buscarEnCatalogo(catalogo: CatalogoItem[], op: string): CatalogoItem | null {
-  if (!op) return null;
-  const q = op.trim().toLowerCase();
+  if (!op || !Array.isArray(catalogo) || catalogo.length === 0) return null;
+  const q = String(op).trim().toLowerCase();
   if (!q) return null;
-  const exact = catalogo.find((c) => c.op.toLowerCase() === q);
-  if (exact) return exact;
-  const digits = q.replace(/\D/g, '');
+
+  const exactMatches = catalogo.filter((c) => String(c.op || '').trim().toLowerCase() === q);
+  if (exactMatches.length === 1) return exactMatches[0];
+  if (exactMatches.length > 1) {
+    return exactMatches.reduce((best, cur) =>
+      (cur.modelos?.length || 0) > (best.modelos?.length || 0) ? cur : best
+    );
+  }
+
+  const digits = opDigits(q);
   if (digits) {
-    const byDigits = catalogo.find((c) => c.op.replace(/\D/g, '') === digits);
-    if (byDigits) return byDigits;
+    const digitsNoZero = opDigitsSinCeros(q);
+    const byDigits = catalogo.filter((c) => {
+      const cd = opDigits(c.op);
+      if (!cd) return false;
+      return cd === digits || opDigitsSinCeros(c.op) === digitsNoZero;
+    });
+    if (byDigits.length > 0) {
+      return byDigits.reduce((best, cur) =>
+        (cur.modelos?.length || 0) > (best.modelos?.length || 0) ? cur : best
+      );
+    }
   }
   return null;
 }
@@ -118,9 +194,21 @@ export function esColumnaCantidad(h: string): boolean {
   );
 }
 
+function buscarClaveBase(mapa: Record<string, any>, op: string): string | null {
+  if (mapa[op]) return op;
+  const qLower = op.trim().toLowerCase();
+  const exactKey = Object.keys(mapa).find((x) => x.trim().toLowerCase() === qLower);
+  if (exactKey) return exactKey;
+  const qDigits = opDigitsSinCeros(op);
+  if (qDigits) {
+    const digitKey = Object.keys(mapa).find((x) => opDigitsSinCeros(x) === qDigits);
+    if (digitKey) return digitKey;
+  }
+  return null;
+}
+
 function buscarBase(mapa: Record<string, any>, op: string) {
-  if (mapa[op]) return mapa[op];
-  const k = Object.keys(mapa).find((x) => x.trim().toLowerCase() === op.trim().toLowerCase());
+  const k = buscarClaveBase(mapa, op);
   return k ? mapa[k] : null;
 }
 
@@ -130,6 +218,7 @@ function parsearHojaCatalogo(sheet: any) {
   const headers = rows[0].map(normalizar);
   const idxOp = headers.findIndex((h) => h === 'op' || h.indexOf('op') !== -1);
   const idxDesc = headers.findIndex((h) => h.indexOf('descripcion') !== -1 || h.indexOf('producto') !== -1 || h.indexOf('articulo') !== -1);
+  const idxModelo = headers.findIndex((h) => h === 'modelo' || h.indexOf('modelo') !== -1);
   const idxCliente = headers.findIndex((h) => h.indexOf('cliente') !== -1 || h.indexOf('razon') !== -1);
   const idxCantidad = headers.findIndex(esColumnaCantidad);
   const idxSap = headers.findIndex((h) => h.indexOf('sap') !== -1 || h.indexOf('codigo') !== -1);
@@ -140,35 +229,41 @@ function parsearHojaCatalogo(sheet: any) {
   const ordenOps: string[] = [];
 
   filasValidas.forEach((r) => {
-    const op = String(r[idxOp]).trim();
+    const opRaw = String(r[idxOp]).trim();
+    const claveExistente = buscarClaveBase(mapaOps, opRaw);
+    const opKey = claveExistente || opRaw;
     const cliente = String(r[idxCliente]).trim();
     const cantNum = idxCantidad !== -1 ? parsearCantidad(r[idxCantidad]) : 0;
-    const desc = String(r[idxDesc]).trim();
+    const descBase = String(r[idxDesc]).trim();
+    const modeloTxt = idxModelo !== -1 ? String(r[idxModelo]).trim() : '';
+    const desc =
+      modeloTxt && !descBase.toLowerCase().includes(modeloTxt.toLowerCase())
+        ? `${descBase} - ${modeloTxt}`
+        : descBase || modeloTxt;
     const sap = idxSap !== -1 ? String(r[idxSap]).trim() : '';
     const modelo: CatalogoModelo = {
+      ...(modeloTxt ? { modelo: modeloTxt } : {}),
       descripcion: desc,
       sap: sap,
       cantidadTotal: cantNum,
     };
-    if (!mapaOps[op]) {
-      mapaOps[op] = { op, cliente, cantidadTotal: 0, modelos: [] };
-      ordenOps.push(op);
+    if (!mapaOps[opKey]) {
+      mapaOps[opKey] = { op: opKey, cliente, cantidadTotal: 0, descripcionBase: descBase, modelos: [] };
+      ordenOps.push(opKey);
     }
-    const yaExiste = mapaOps[op].modelos.some((mo: any) => {
-      return mo.descripcion === modelo.descripcion && (mo.sap || '') === (modelo.sap || '');
+    const idxExistente = mapaOps[opKey].modelos.findIndex((mo: any) => {
+      const sameDesc = mo.descripcion === modelo.descripcion;
+      const sameMod = (mo.modelo || '') === (modelo.modelo || '');
+      const sameSap = (mo.sap || '') === (modelo.sap || '');
+      return sameDesc && sameMod && sameSap;
     });
-    if (!yaExiste) {
-      mapaOps[op].modelos.push(modelo);
-    } else {
-      const idxExistente = mapaOps[op].modelos.findIndex(
-        (mo: any) => mo.descripcion === modelo.descripcion && (mo.sap || '') === (modelo.sap || '')
-      );
-      if (idxExistente !== -1 && cantNum > 0) {
-        const cantPrev = parsearCantidad(mapaOps[op].modelos[idxExistente].cantidadTotal);
-        mapaOps[op].modelos[idxExistente].cantidadTotal = cantPrev + cantNum;
-      }
+    if (idxExistente === -1) {
+      mapaOps[opKey].modelos.push(modelo);
+    } else if (cantNum > 0) {
+      const cantPrev = parsearCantidad(mapaOps[opKey].modelos[idxExistente].cantidadTotal);
+      mapaOps[opKey].modelos[idxExistente].cantidadTotal = cantPrev + cantNum;
     }
-    mapaOps[op].cantidadTotal += cantNum;
+    mapaOps[opKey].cantidadTotal += cantNum;
   });
   return { mapaOps, ordenOps };
 }
@@ -178,7 +273,10 @@ function parsearHojaModelos(sheet: any, mapaBase: Record<string, any>) {
   if (rows.length < 2) return null;
   const headers = rows[0].map(normalizar);
   const idxOp = headers.findIndex((h) => h === 'op' || h.indexOf('op') !== -1);
-  const idxModelo = headers.findIndex((h) => h.indexOf('modelo') !== -1 || h.indexOf('descripcion') !== -1 || h.indexOf('producto') !== -1);
+  let idxModelo = headers.findIndex((h) => h === 'modelo' || h.indexOf('modelo') !== -1);
+  if (idxModelo === -1) {
+    idxModelo = headers.findIndex((h) => h.indexOf('descripcion') !== -1 || h.indexOf('producto') !== -1 || h.indexOf('variante') !== -1);
+  }
   const idxCantidad = headers.findIndex(esColumnaCantidad);
   const idxSap = headers.findIndex((h) => h.indexOf('sap') !== -1 || h.indexOf('codigo') !== -1);
   if (idxOp === -1 || idxModelo === -1) return null;
@@ -188,10 +286,11 @@ function parsearHojaModelos(sheet: any, mapaBase: Record<string, any>) {
   const ordenOps: string[] = [];
 
   filasValidas.forEach((r) => {
-    const op = String(r[idxOp]).trim();
+    const opRaw = String(r[idxOp]).trim();
+    const base = buscarBase(mapaBase, opRaw);
+    const opKey = base ? base.op : buscarClaveBase(mapaOps, opRaw) || opRaw;
     const modeloTxt = String(r[idxModelo]).trim();
     const cantNum = idxCantidad !== -1 ? parsearCantidad(r[idxCantidad]) : 0;
-    const base = buscarBase(mapaBase, op);
     const descBase = base ? (base.modelos && base.modelos[0] ? base.modelos[0].descripcion : (base.descripcion || '')) : '';
     const descripcionFinal =
       descBase && !modeloTxt.toLowerCase().includes(descBase.toLowerCase())
@@ -203,25 +302,20 @@ function parsearHojaModelos(sheet: any, mapaBase: Record<string, any>) {
       sap: idxSap !== -1 ? String(r[idxSap]).trim() : '',
       cantidadTotal: cantNum,
     };
-    if (!mapaOps[op]) {
-      mapaOps[op] = { op, cliente: base ? base.cliente : '', cantidadTotal: 0, modelos: [] };
-      ordenOps.push(op);
+    if (!mapaOps[opKey]) {
+      mapaOps[opKey] = { op: opKey, cliente: base ? base.cliente : '', cantidadTotal: 0, modelos: [] };
+      ordenOps.push(opKey);
     }
-    const yaExisteModelo = mapaOps[op].modelos.some((mo: any) => {
-      return (mo.modelo === modeloTxt || mo.descripcion === descripcionFinal) && mo.sap === modelo.sap;
-    });
-    if (!yaExisteModelo) {
-      mapaOps[op].modelos.push(modelo);
-    } else {
-      const idxM = mapaOps[op].modelos.findIndex(
-        (mo: any) => (mo.modelo === modeloTxt || mo.descripcion === descripcionFinal) && mo.sap === modelo.sap
-      );
-      if (idxM !== -1 && cantNum > 0) {
-        const cantPrev = parsearCantidad(mapaOps[op].modelos[idxM].cantidadTotal);
-        mapaOps[op].modelos[idxM].cantidadTotal = cantPrev + cantNum;
-      }
+    const idxM = mapaOps[opKey].modelos.findIndex(
+      (mo: any) => (mo.modelo === modeloTxt || mo.descripcion === descripcionFinal) && (mo.sap || '') === (modelo.sap || '')
+    );
+    if (idxM === -1) {
+      mapaOps[opKey].modelos.push(modelo);
+    } else if (cantNum > 0) {
+      const cantPrev = parsearCantidad(mapaOps[opKey].modelos[idxM].cantidadTotal);
+      mapaOps[opKey].modelos[idxM].cantidadTotal = cantPrev + cantNum;
     }
-    mapaOps[op].cantidadTotal += cantNum;
+    mapaOps[opKey].cantidadTotal += cantNum;
   });
   return { mapaOps, ordenOps };
 }
@@ -237,21 +331,23 @@ export function construirCatalogo(sheetPrincipal: any, sheetModelos: any): Catal
     const modelos = parsearHojaModelos(sheetModelos, principal.mapaOps);
     if (modelos) {
       modelos.ordenOps.forEach((op) => {
-        const base = buscarBase(principal.mapaOps, op);
+        const claveBase = buscarClaveBase(principal.mapaOps, op);
+        const base = claveBase ? principal.mapaOps[claveBase] : null;
+        const targetOp = claveBase || op;
         const modelosData = modelos.mapaOps[op];
 
-        if (!mapaFinal[op]) {
-          ordenFinal.push(op);
-          mapaFinal[op] = modelosData;
+        if (!mapaFinal[targetOp]) {
+          ordenFinal.push(targetOp);
+          mapaFinal[targetOp] = { ...modelosData, op: targetOp };
         } else {
-          const descBase = base && base.modelos[0] ? base.modelos[0].descripcion : (base?.descripcion || '');
-          // If models sheet has quantities, use sum of models, otherwise preserve base quantity
+          const descBase = base && base.modelos[0] ? (base.descripcionBase || base.modelos[0].descripcion) : (base?.descripcion || '');
           const cantModelos = modelosData.cantidadTotal || 0;
           const cantBase = base ? (base.cantidadTotal || 0) : 0;
           const cantFinal = cantModelos > 0 ? cantModelos : cantBase;
 
-          mapaFinal[op] = {
+          mapaFinal[targetOp] = {
             ...modelosData,
+            op: targetOp,
             cliente: base ? base.cliente : modelosData.cliente,
             cantidadTotal: cantFinal,
             descripcionBase: descBase,
@@ -295,7 +391,14 @@ export function construirCatalogo(sheetPrincipal: any, sheetModelos: any): Catal
 
 export function procesarWorkbookCatalogo(wb: XLSX.WorkBook): CatalogoItem[] | null {
   const sheetPrincipal = wb.Sheets[wb.SheetNames[0]];
-  const sheetModelos = wb.SheetNames.length > 1 ? wb.Sheets[wb.SheetNames[1]] : null;
+  let sheetModelos: any = null;
+  if (wb.SheetNames.length > 1) {
+    const nombreModelo = wb.SheetNames.slice(1).find((n) => {
+      const norm = normalizar(n);
+      return norm.includes('modelo') || norm.includes('detalle') || norm.includes('variante');
+    });
+    sheetModelos = wb.Sheets[nombreModelo || wb.SheetNames[1]];
+  }
   return construirCatalogo(sheetPrincipal, sheetModelos);
 }
 

@@ -22,7 +22,7 @@ import {
   sbFetch,
   saveSession,
 } from '../services/supabase';
-import { generarFilasTurno, parsearCodigosMaquinas } from '../services/excel';
+import { generarFilasTurno, parsearCodigosMaquinas, normalizarCatalogoItem } from '../services/excel';
 import { generarReporteProduccion } from '../services/reports';
 
 export interface ToastMessage {
@@ -63,8 +63,9 @@ interface AppContextType {
   showToast: (type: 'ok' | 'error', text: string) => void;
   removeToast: (id: string) => void;
 
-  sincronizarCatalogoSupabase: () => Promise<number>;
+  sincronizarCatalogoSupabase: (forzarCompleto?: boolean) => Promise<number>;
   subirCatalogoASupabase: (nuevo: CatalogoItem[]) => Promise<void>;
+  guardarItemCatalogo: (item: CatalogoItem) => Promise<{ synced: boolean }>;
   reiniciarTurno: () => void;
   guardarTurnoDB: (filasPersonalizadas?: FilaTurnoExcel[], forzarReemplazo?: boolean) => Promise<{ requiereConfirmacion?: boolean; existenteInfo?: any } | void>;
 }
@@ -102,6 +103,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const [catalogo, setCatalogoState] = useState<CatalogoItem[]>([]);
+  const catalogoRef = React.useRef<CatalogoItem[]>([]);
   const [lista, setListaState] = useState<ListaItem[]>([]);
   const [maquinas, setMaquinasState] = useState<Maquina[]>([]);
   const [turno, setTurnoState] = useState<TurnoMaquina[]>([]);
@@ -132,6 +134,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Initialize
   useEffect(() => {
     const initial = loadInitialData();
+    catalogoRef.current = initial.catalogo;
     setCatalogoState(initial.catalogo);
     setListaState(initial.lista);
     setMaquinasState(initial.maquinas);
@@ -177,6 +180,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const setCatalogo: React.Dispatch<React.SetStateAction<CatalogoItem[]>> = useCallback((valOrFn) => {
     setCatalogoState((prev) => {
       const next = typeof valOrFn === 'function' ? valOrFn(prev) : valOrFn;
+      catalogoRef.current = next;
       saveStorageItem(STORAGE_KEYS.CATALOGO, next);
       return next;
     });
@@ -237,11 +241,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   // Supabase Sync Catalogo
-  const sincronizarCatalogoSupabase = useCallback(async (): Promise<number> => {
+  const sincronizarCatalogoSupabase = useCallback(async (forzarCompleto = false): Promise<number> => {
     const cfg = getSupabaseConfig(false);
     if (!cfg) return 0;
     let cursor = localStorage.getItem(STORAGE_KEYS.CAT_CURSOR) || '';
-    if (!catalogo.length) cursor = '';
+    if (forzarCompleto || !catalogoRef.current.length) cursor = '';
     const filtro = cursor ? '&actualizado_en=gt.' + encodeURIComponent(cursor) : '';
     const PAG = 1000;
     let pagina = 0;
@@ -258,7 +262,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
       if (rows && rows.length) {
         rows.forEach((r) => {
-          if (r.datos && r.datos.op) recibidas.push(r.datos);
+          const itemNorm = normalizarCatalogoItem(r.datos);
+          if (itemNorm) recibidas.push(itemNorm);
           if (r.actualizado_en && r.actualizado_en > maxTs) maxTs = r.actualizado_en;
         });
         if (rows.length === PAG) {
@@ -271,38 +276,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await pedir();
     if (!recibidas.length) return 0;
 
-    setCatalogoState((currentCatalogo) => {
-      let nuevoCatalogo = [...currentCatalogo];
-      if (!cursor) {
-        nuevoCatalogo = recibidas;
-        cambiadas = recibidas.length;
-      } else {
-        const indice: Record<string, number> = {};
-        nuevoCatalogo.forEach((c, k) => {
-          indice[c.op] = k;
-        });
-        recibidas.forEach((it) => {
-          if (indice[it.op] !== undefined) {
-            if (canon(nuevoCatalogo[indice[it.op]]) !== canon(it)) {
-              nuevoCatalogo[indice[it.op]] = it;
-              cambiadas++;
-            }
-          } else {
-            indice[it.op] = nuevoCatalogo.length;
-            nuevoCatalogo.push(it);
+    const currentCatalogo = catalogoRef.current;
+    let nuevoCatalogo = currentCatalogo
+      .map((c) => normalizarCatalogoItem(c) || c)
+      .filter(Boolean);
+    if (!cursor) {
+      nuevoCatalogo = recibidas;
+      cambiadas = recibidas.length;
+    } else {
+      const indice: Record<string, number> = {};
+      nuevoCatalogo.forEach((c, k) => {
+        indice[c.op] = k;
+      });
+      recibidas.forEach((it) => {
+        if (indice[it.op] !== undefined) {
+          if (canon(nuevoCatalogo[indice[it.op]]) !== canon(it)) {
+            nuevoCatalogo[indice[it.op]] = it;
             cambiadas++;
           }
-        });
-      }
-      try {
-        localStorage.setItem(STORAGE_KEYS.CAT_CURSOR, maxTs);
-      } catch {}
-      saveStorageItem(STORAGE_KEYS.CATALOGO, nuevoCatalogo);
-      return nuevoCatalogo;
-    });
+        } else {
+          indice[it.op] = nuevoCatalogo.length;
+          nuevoCatalogo.push(it);
+          cambiadas++;
+        }
+      });
+    }
+    catalogoRef.current = nuevoCatalogo;
+    try {
+      localStorage.setItem(STORAGE_KEYS.CAT_CURSOR, maxTs);
+    } catch {}
+    saveStorageItem(STORAGE_KEYS.CATALOGO, nuevoCatalogo);
+    setCatalogoState(nuevoCatalogo);
 
     return cambiadas;
-  }, [catalogo.length, session]);
+  }, [session]);
 
   // Upload catalog to Supabase
   const subirCatalogoASupabase = useCallback(
@@ -316,7 +323,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       await sincronizarCatalogoSupabase();
       const cursor = localStorage.getItem(STORAGE_KEYS.CAT_CURSOR);
-      const base = cursor ? catalogo : [];
+      const base = cursor ? catalogoRef.current : [];
       const conocidas: Record<string, string> = {};
       base.forEach((c) => {
         conocidas[c.op] = canon(c);
@@ -369,16 +376,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await sincronizarCatalogoSupabase();
       showToast('ok', `Catálogo actualizado para todos: ${nuevas} nuevas, ${modificadas} modificadas`);
     },
-    [session, catalogo, sincronizarCatalogoSupabase, showToast]
+    [session, sincronizarCatalogoSupabase, showToast]
+  );
+
+  const guardarItemCatalogo = useCallback(
+    async (item: CatalogoItem): Promise<{ synced: boolean }> => {
+      const norm = normalizarCatalogoItem(item) || item;
+      const base = catalogoRef.current.slice();
+      const idx = base.findIndex((c) => c.op === norm.op);
+      if (idx >= 0) {
+        base[idx] = norm;
+      } else {
+        base.push(norm);
+      }
+      catalogoRef.current = base;
+      saveStorageItem(STORAGE_KEYS.CATALOGO, base);
+      setCatalogoState(base);
+
+      if (session) {
+        const cfg = getSupabaseConfig(false);
+        if (cfg) {
+          try {
+            await sbFetch(
+              cfg,
+              'catalogo_op?on_conflict=op',
+              {
+                method: 'POST',
+                json: [{ op: norm.op, datos: norm }],
+                prefer: 'resolution=merge-duplicates,return=minimal',
+              },
+              session
+            );
+            return { synced: true };
+          } catch {
+            return { synced: false };
+          }
+        }
+      }
+      return { synced: false };
+    },
+    [session]
   );
 
   // Auto sync on mount if online
   useEffect(() => {
-    if (navigator.onLine) {
-      setTimeout(() => {
-        sincronizarCatalogoSupabase().catch(() => {});
-      }, 600);
-    }
+    if (!navigator.onLine) return;
+    const timer = setTimeout(() => {
+      sincronizarCatalogoSupabase().catch(() => {});
+    }, 350);
+    return () => clearTimeout(timer);
   }, [sincronizarCatalogoSupabase]);
 
   // Restart shift
@@ -579,6 +625,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         removeToast,
         sincronizarCatalogoSupabase,
         subirCatalogoASupabase,
+        guardarItemCatalogo,
         reiniciarTurno,
         guardarTurnoDB,
       }}

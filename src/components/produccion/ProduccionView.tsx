@@ -20,6 +20,7 @@ import {
   Share2,
   SlidersHorizontal,
   X,
+  RefreshCw,
 } from 'lucide-react';
 import {
   buscarEnCatalogo,
@@ -44,7 +45,7 @@ import {
   copiarAlPortapapeles,
 } from '../../services/reports';
 import { getSupabaseConfig, sbLogin } from '../../services/supabase';
-import { Maquina, TurnoMaquina, RegistroTurno, TurnoDBRow } from '../../types';
+import { Maquina, TurnoMaquina, RegistroTurno, TurnoDBRow, CatalogoItem, CatalogoModelo } from '../../types';
 import {
   cargarTurnosNubeSnapshot,
   calcularAvanceOpEnTarjeta,
@@ -71,7 +72,21 @@ export const ProduccionView: React.FC = () => {
     showToast,
     reiniciarTurno,
     guardarTurnoDB,
+    sincronizarCatalogoSupabase,
+    guardarItemCatalogo,
   } = useApp();
+
+  const [sincronizandoCat, setSincronizandoCat] = useState(false);
+  const [guardandoModelos, setGuardandoModelos] = useState(false);
+  const [defModelosModal, setDefModelosModal] = useState<{
+    op: string;
+    maquinaId: string;
+    inst: number;
+    baseDesc: string;
+    cliente: string;
+    totalOp: number;
+    rows: { modelo: string; cantidad: string; sap: string }[];
+  } | null>(null);
 
   const [expandidos, setExpandidos] = useState<Record<string, boolean>>({});
   const [panelLoginOpen, setPanelLoginOpen] = useState(false);
@@ -107,6 +122,7 @@ export const ProduccionView: React.FC = () => {
   const [mermaInputs, setMermaInputs] = useState<Record<string, string>>({});
   const [modoCantidadMap, setModoCantidadMap] = useState<Record<string, 'total' | 'caja'>>({});
   const [opSuggestMap, setOpSuggestMap] = useState<Record<string, string>>({});
+  const opSuggestMapRef = React.useRef<Record<string, string>>({});
   const [showSuggestMap, setShowSuggestMap] = useState<Record<string, boolean>>({});
   const [turnosNubeSnap, setTurnosNubeSnap] = useState<{
     dbRows: TurnoDBRow[];
@@ -187,6 +203,38 @@ export const ProduccionView: React.FC = () => {
     });
   };
 
+  const updateOpSuggest = (cardKey: string, val: string) => {
+    opSuggestMapRef.current[cardKey] = val;
+    setOpSuggestMap((prev) => ({ ...prev, [cardKey]: val }));
+  };
+
+  const assignOpIfEmpty = (maquinaId: string, inst = 1, op: string) => {
+    setTurno((prev) => {
+      const idx = prev.findIndex((x) => x.maquinaId === maquinaId && (x.instancia || 1) === inst);
+      if (idx === -1) {
+        return [
+          ...prev,
+          {
+            maquinaId,
+            instancia: inst,
+            op,
+            objetivo: null,
+            motivoParada: '',
+            observaciones: '',
+            personal: '',
+            modeloIdx: -1,
+            pliego: '',
+            registros: [],
+          },
+        ];
+      }
+      if (prev[idx].op) return prev;
+      const copia = [...prev];
+      copia[idx] = { ...copia[idx], op, modeloIdx: -1 };
+      return copia;
+    });
+  };
+
   const toggleExpand = (clave: string) => {
     setExpandidos((prev) => (prev[clave] ? {} : { [clave]: true }));
   };
@@ -197,6 +245,24 @@ export const ProduccionView: React.FC = () => {
     const t = getTurnoMaquina(m.id, inst);
     const esVasos = m.area === 'vasos_envases';
     const modo = modoCantidadMap[cardKey] || 'total';
+
+    // Si el usuario escribió la OP en el buscador pero aún no la fijó, resolverla si coincide
+    let currentOp = t.op || '';
+    const pendingSuggest = opSuggestMapRef.current[cardKey] ?? opSuggestMap[cardKey] ?? '';
+    if (!currentOp && pendingSuggest) {
+      const typedDigits = pendingSuggest.replace(/\D/g, '').trim();
+      if (typedDigits) {
+        const autoMatch = buscarEnCatalogo(catalogo, typedDigits);
+        currentOp = autoMatch ? autoMatch.op : typedDigits;
+        updateTurnoMaquina(m.id, inst, { op: currentOp, modeloIdx: -1 });
+        updateOpSuggest(cardKey, '');
+        setShowSuggestMap((prev) => ({ ...prev, [cardKey]: false }));
+        if (m.tipoProducto === 'pt' && autoMatch && autoMatch.modelos && autoMatch.modelos.length > 1) {
+          showToast('error', 'OP asignada: selecciona primero el modelo específico para PT');
+          return;
+        }
+      }
+    }
 
     let cantidad = 0;
     if (esVasos && modo === 'caja') {
@@ -218,7 +284,6 @@ export const ProduccionView: React.FC = () => {
     let merma = parseInt(mermaInputs[cardKey] || '0', 10);
     if (isNaN(merma) || merma < 0) merma = 0;
 
-    const currentOp = t.op || '';
     const match = buscarEnCatalogo(catalogo, currentOp);
     const tieneMultiModelos = Boolean(match && match.modelos && match.modelos.length > 1);
     if (m.tipoProducto === 'pt' && tieneMultiModelos && (t.modeloIdx < 0 || !match?.modelos[t.modeloIdx])) {
@@ -503,6 +568,26 @@ export const ProduccionView: React.FC = () => {
 
           {/* Quick utility links */}
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={sincronizandoCat}
+              onClick={async () => {
+                setSincronizandoCat(true);
+                try {
+                  const n = await sincronizarCatalogoSupabase(true);
+                  showToast('ok', n ? `Catálogo actualizado (${n} OP)` : 'Catálogo al día');
+                } catch {
+                  showToast('error', 'No se pudo actualizar el catálogo');
+                } finally {
+                  setSincronizandoCat(false);
+                }
+              }}
+              className="text-xs text-[#CBD5E0] hover:text-white py-1 px-2 rounded-lg bg-[#232A38] border border-[#4A5568] cursor-pointer flex items-center gap-1 disabled:opacity-60"
+              title="Actualizar catálogo de OP y modelos desde la nube"
+            >
+              <RefreshCw size={12} className={sincronizandoCat ? 'animate-spin' : ''} />
+              <span className="hidden sm:inline">Catálogo</span>
+            </button>
             <button
               type="button"
               onClick={() => setPanelHistorialOpen((prev) => !prev)}
@@ -928,6 +1013,23 @@ export const ProduccionView: React.FC = () => {
                                 {m.tipoProducto.toUpperCase()}
                               </span>
                             )}
+                            {t.op && currentMatch && currentMatch.modelos && currentMatch.modelos.length > 1 && (
+                              <span
+                                className={`text-[9.5px] font-bold px-1.5 py-0.2 rounded border truncate max-w-[140px] ${
+                                  t.modeloIdx >= 0 && currentMatch.modelos[t.modeloIdx]
+                                    ? 'bg-[#38A169]/20 text-[#48BB78] border-[#38A169]/40'
+                                    : m.tipoProducto === 'pt'
+                                    ? 'bg-[#F2A93B]/25 text-[#F6AD55] border-[#F2A93B]/60'
+                                    : 'bg-[#232A38] text-[#CBD5E0] border-[#4A5568]'
+                                }`}
+                              >
+                                {t.modeloIdx >= 0 && currentMatch.modelos[t.modeloIdx]
+                                  ? `Mod: ${currentMatch.modelos[t.modeloIdx].modelo || currentMatch.modelos[t.modeloIdx].descripcion}`
+                                  : m.tipoProducto === 'pt'
+                                  ? `Elegir modelo (${currentMatch.modelos.length})`
+                                  : `${currentMatch.modelos.length} mod. (Todos)`}
+                              </span>
+                            )}
                             {avanceOp && (
                               <span
                                 className={`text-[9.5px] font-bold px-1.5 py-0.2 rounded font-['IBM_Plex_Mono',monospace] border ${
@@ -1104,22 +1206,28 @@ export const ProduccionView: React.FC = () => {
                                 </div>
 
                                 {/* Multi-model chips */}
-                                {currentMatch && currentMatch.modelos && currentMatch.modelos.length > 1 && (
-                                  <div className="space-y-1 pt-0.5">
-                                    {m.tipoProducto === 'pt' && (
-                                      <span className="text-[10px] font-semibold text-[#F6AD55] uppercase tracking-wide block">
-                                        Modelos (elige 1 para PT — cada uno se produce por separado):
-                                      </span>
-                                    )}
-                                    <div className="flex gap-1 flex-wrap">
+                                {currentMatch && currentMatch.modelos && currentMatch.modelos.length > 1 ? (
+                                  <div
+                                    className={`space-y-1.5 p-2 rounded-lg border ${
+                                      m.tipoProducto === 'pt' && t.modeloIdx < 0
+                                        ? 'bg-[#3A2E1B]/50 border-[#F2A93B]/70'
+                                        : 'bg-[#232A38] border-[#4A5568]'
+                                    }`}
+                                  >
+                                    <span className="text-[10px] font-bold text-[#F6AD55] uppercase tracking-wide block">
+                                      {m.tipoProducto === 'pt'
+                                        ? `Modelos (${currentMatch.modelos.length} · elige 1 para PT):`
+                                        : `Modelos (${currentMatch.modelos.length} · elige uno o Todos):`}
+                                    </span>
+                                    <div className="flex gap-1.5 flex-wrap">
                                       {m.tipoProducto !== 'pt' && (
                                         <button
                                           type="button"
                                           onClick={() => updateTurnoMaquina(m.id, inst, { modeloIdx: -1 })}
-                                          className={`py-1 px-2 rounded text-[11px] font-semibold cursor-pointer border ${
+                                          className={`py-1 px-2.5 rounded-md text-[11px] font-semibold cursor-pointer border transition-colors ${
                                             t.modeloIdx === -1
-                                              ? 'bg-[#F2A93B] text-[#12161F] border-[#F2A93B]'
-                                              : 'bg-[#1A202C] text-[#CBD5E0] border-[#4A5568]'
+                                              ? 'bg-[#F2A93B] text-[#12161F] border-[#F2A93B] font-bold'
+                                              : 'bg-[#1A202C] text-[#CBD5E0] border-[#4A5568] hover:border-[#F2A93B]/60'
                                           }`}
                                         >
                                           Todos
@@ -1130,9 +1238,9 @@ export const ProduccionView: React.FC = () => {
                                           key={i}
                                           type="button"
                                           onClick={() => updateTurnoMaquina(m.id, inst, { modeloIdx: i })}
-                                          className={`py-1 px-2 rounded text-[11px] font-semibold cursor-pointer border ${
+                                          className={`py-1 px-2.5 rounded-md text-[11px] font-semibold cursor-pointer border transition-colors ${
                                             t.modeloIdx === i
-                                              ? 'bg-[#F2A93B] text-[#12161F] border-[#F2A93B]'
+                                              ? 'bg-[#F2A93B] text-[#12161F] border-[#F2A93B] font-bold'
                                               : 'bg-[#1A202C] text-[#CBD5E0] border-[#4A5568] hover:border-[#F2A93B]/60'
                                           }`}
                                         >
@@ -1146,7 +1254,47 @@ export const ProduccionView: React.FC = () => {
                                       ))}
                                     </div>
                                   </div>
-                                )}
+                                ) : currentMatch &&
+                                  currentMatch.modelos &&
+                                  currentMatch.modelos.length === 1 &&
+                                  /\b(\d+\s*(modelos?|sabores?|dise[ñn]os?)|varios\s+modelos?|trisabor|bisabor|surtid[oa])\b/i.test(
+                                    currentMatch.descripcionBase || currentMatch.descripcion || ''
+                                  ) ? (
+                                  <div className="text-[10.5px] text-[#F6AD55] bg-[#3A2E1B]/40 border border-[#F2A93B]/40 rounded-lg px-2.5 py-2 leading-snug space-y-1.5">
+                                    <div>
+                                      Esta OP indica varios modelos en su título, pero en la nube/catálogo solo tiene 1 fila general cargada (sin desglose de modelos). Puedes reimportar el Excel con su hoja Modelos o definirlos aquí:
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const descTitulo = currentMatch.descripcionBase || currentMatch.descripcion || '';
+                                        const numMatch = descTitulo.match(/\b(\d+)\s*(?:modelos?|sabores?|dise[ñn]os?)\b/i);
+                                        const cantInicial = numMatch
+                                          ? Math.min(12, Math.max(2, parseInt(numMatch[1], 10)))
+                                          : /\btrisabor\b/i.test(descTitulo)
+                                          ? 3
+                                          : 2;
+                                        setDefModelosModal({
+                                          op: currentMatch.op,
+                                          maquinaId: m.id,
+                                          inst,
+                                          baseDesc: descTitulo,
+                                          cliente: currentMatch.cliente || '',
+                                          totalOp: Number(currentMatch.cantidadTotal) || 0,
+                                          rows: Array.from({ length: cantInicial }, (_, k) => ({
+                                            modelo: `Modelo ${k + 1}`,
+                                            cantidad: '',
+                                            sap: '',
+                                          })),
+                                        });
+                                      }}
+                                      className="inline-flex items-center gap-1 py-1 px-2.5 rounded-md bg-[#F2A93B] text-[#12161F] text-[11px] font-bold cursor-pointer hover:brightness-105"
+                                    >
+                                      <Plus size={12} />
+                                      <span>Definir modelos de OP {currentMatch.op}</span>
+                                    </button>
+                                  </div>
+                                ) : null}
 
                                 {currentMatch && (
                                   <div className="text-[11px] text-[#CBD5E0] bg-[#232A38] px-2 py-1 rounded flex items-center justify-between gap-1 flex-wrap">
@@ -1163,24 +1311,50 @@ export const ProduccionView: React.FC = () => {
                                           {resolverModelo(currentMatch, t.modeloIdx).descripcion} ·{' '}
                                           <span className="text-[#A0AEC0]">{currentMatch.cliente}</span>
                                         </span>
-                                        {(() => {
-                                          const esMulti = Boolean(
-                                            currentMatch.modelos && currentMatch.modelos.length > 1
-                                          );
-                                          const mod =
-                                            t.modeloIdx >= 0 &&
-                                            currentMatch.modelos &&
-                                            currentMatch.modelos[t.modeloIdx];
-                                          if (m.tipoProducto === 'pt' && esMulti && !mod) return null;
-                                          const cant = mod && mod.cantidadTotal ? mod.cantidadTotal : currentMatch.cantidadTotal;
-                                          if (!cant || Number(cant) <= 0) return null;
-                                          return (
-                                            <span className="text-[#F2A93B] font-['IBM_Plex_Mono',monospace] font-bold text-[10.5px]">
-                                              Cant. {mod && mod.cantidadTotal ? 'modelo' : 'orden'}:{' '}
-                                              {Number(cant).toLocaleString('es-PE')} u
-                                            </span>
-                                          );
-                                        })()}
+                                        <div className="flex items-center gap-2 shrink-0">
+                                          {(!currentMatch.modelos || currentMatch.modelos.length <= 1) && (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                const descTitulo = currentMatch.descripcionBase || currentMatch.descripcion || '';
+                                                setDefModelosModal({
+                                                  op: currentMatch.op,
+                                                  maquinaId: m.id,
+                                                  inst,
+                                                  baseDesc: descTitulo,
+                                                  cliente: currentMatch.cliente || '',
+                                                  totalOp: Number(currentMatch.cantidadTotal) || 0,
+                                                  rows: [
+                                                    { modelo: '', cantidad: '', sap: currentMatch.sap || '' },
+                                                    { modelo: '', cantidad: '', sap: '' },
+                                                  ],
+                                                });
+                                              }}
+                                              className="text-[10px] text-[#93C5FD] hover:underline cursor-pointer"
+                                              title="Agregar modelos a esta OP en el catálogo"
+                                            >
+                                              + Modelos
+                                            </button>
+                                          )}
+                                          {(() => {
+                                            const esMulti = Boolean(
+                                              currentMatch.modelos && currentMatch.modelos.length > 1
+                                            );
+                                            const mod =
+                                              t.modeloIdx >= 0 &&
+                                              currentMatch.modelos &&
+                                              currentMatch.modelos[t.modeloIdx];
+                                            if (m.tipoProducto === 'pt' && esMulti && !mod) return null;
+                                            const cant = mod && mod.cantidadTotal ? mod.cantidadTotal : currentMatch.cantidadTotal;
+                                            if (!cant || Number(cant) <= 0) return null;
+                                            return (
+                                              <span className="text-[#F2A93B] font-['IBM_Plex_Mono',monospace] font-bold text-[10.5px]">
+                                                Cant. {mod && mod.cantidadTotal ? 'modelo' : 'orden'}:{' '}
+                                                {Number(cant).toLocaleString('es-PE')} u
+                                              </span>
+                                            );
+                                          })()}
+                                        </div>
                                       </>
                                     )}
                                   </div>
@@ -1278,25 +1452,34 @@ export const ProduccionView: React.FC = () => {
                                     value={opSuggestMap[cardKey] || ''}
                                     onChange={(e) => {
                                       const val = e.target.value.replace(/\D/g, '');
-                                      setOpSuggestMap((prev) => ({ ...prev, [cardKey]: val }));
+                                      updateOpSuggest(cardKey, val);
                                       setShowSuggestMap((prev) => ({ ...prev, [cardKey]: true }));
                                     }}
                                     onFocus={() => setShowSuggestMap((prev) => ({ ...prev, [cardKey]: true }))}
                                     onBlur={() => {
                                       setTimeout(() => {
                                         setShowSuggestMap((prev) => ({ ...prev, [cardKey]: false }));
-                                      }, 240);
+                                        const typed = (opSuggestMapRef.current[cardKey] || '').replace(/\D/g, '').trim();
+                                        if (typed) {
+                                          const exact = buscarEnCatalogo(catalogo, typed);
+                                          if (exact) {
+                                            assignOpIfEmpty(m.id, inst, exact.op);
+                                            updateOpSuggest(cardKey, '');
+                                          }
+                                        }
+                                      }, 200);
                                     }}
                                     onKeyDown={(e) => {
                                       const allowed = ['Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter', 'Escape'];
                                       if (allowed.includes(e.key) || e.ctrlKey || e.metaKey) {
                                         if (e.key === 'Enter') {
                                           e.preventDefault();
-                                          const typed = (opSuggestMap[cardKey] || '').replace(/\D/g, '').trim();
+                                          const typed = (opSuggestMapRef.current[cardKey] || '').replace(/\D/g, '').trim();
                                           if (typed) {
-                                            const selected = matchingSuggs.length > 0 ? matchingSuggs[0].op : typed;
+                                            const exact = buscarEnCatalogo(catalogo, typed);
+                                            const selected = exact ? exact.op : matchingSuggs.length > 0 ? matchingSuggs[0].op : typed;
                                             updateTurnoMaquina(m.id, inst, { op: selected, modeloIdx: -1 });
-                                            setOpSuggestMap((prev) => ({ ...prev, [cardKey]: '' }));
+                                            updateOpSuggest(cardKey, '');
                                             setShowSuggestMap((prev) => ({ ...prev, [cardKey]: false }));
                                           }
                                         }
@@ -1314,7 +1497,7 @@ export const ProduccionView: React.FC = () => {
                                     <button
                                       type="button"
                                       onClick={() => {
-                                        setOpSuggestMap((prev) => ({ ...prev, [cardKey]: '' }));
+                                        updateOpSuggest(cardKey, '');
                                         setShowSuggestMap((prev) => ({ ...prev, [cardKey]: false }));
                                       }}
                                       className="absolute right-2 top-1/2 -translate-y-1/2 text-[#A0AEC0] hover:text-white p-1 rounded"
@@ -1341,7 +1524,13 @@ export const ProduccionView: React.FC = () => {
                                             onMouseDown={(e) => {
                                               e.preventDefault();
                                               updateTurnoMaquina(m.id, inst, { op: item.op, modeloIdx: -1 });
-                                              setOpSuggestMap((prev) => ({ ...prev, [cardKey]: '' }));
+                                              updateOpSuggest(cardKey, '');
+                                              setShowSuggestMap((prev) => ({ ...prev, [cardKey]: false }));
+                                            }}
+                                            onClick={() => {
+                                              if (!(opSuggestMapRef.current[cardKey] || '')) return;
+                                              updateTurnoMaquina(m.id, inst, { op: item.op, modeloIdx: -1 });
+                                              updateOpSuggest(cardKey, '');
                                               setShowSuggestMap((prev) => ({ ...prev, [cardKey]: false }));
                                             }}
                                             className="w-full text-left py-2 px-2.5 hover:bg-[#232A38] active:bg-[#2D3748] text-xs block text-white transition-colors cursor-pointer group"
@@ -1359,7 +1548,7 @@ export const ProduccionView: React.FC = () => {
                                               </div>
                                               <div className="flex items-center gap-1">
                                                 {item.modelos && item.modelos.length > 1 && (
-                                                  <span className="text-[9px] px-1 py-0.2 rounded bg-[#4A5568]/40 text-[#CBD5E0]">
+                                                  <span className="text-[9px] px-1 py-0.2 rounded bg-[#F2A93B]/20 border border-[#F2A93B]/40 text-[#F6AD55] font-bold">
                                                     {item.modelos.length} mod.
                                                   </span>
                                                 )}
@@ -1380,7 +1569,13 @@ export const ProduccionView: React.FC = () => {
                                         onMouseDown={(e) => {
                                           e.preventDefault();
                                           updateTurnoMaquina(m.id, inst, { op: queryDigits, modeloIdx: -1 });
-                                          setOpSuggestMap((prev) => ({ ...prev, [cardKey]: '' }));
+                                          updateOpSuggest(cardKey, '');
+                                          setShowSuggestMap((prev) => ({ ...prev, [cardKey]: false }));
+                                        }}
+                                        onClick={() => {
+                                          if (!(opSuggestMapRef.current[cardKey] || '')) return;
+                                          updateTurnoMaquina(m.id, inst, { op: queryDigits, modeloIdx: -1 });
+                                          updateOpSuggest(cardKey, '');
                                           setShowSuggestMap((prev) => ({ ...prev, [cardKey]: false }));
                                         }}
                                         className="w-full text-left p-2.5 hover:bg-[#232A38] text-xs block text-white cursor-pointer"
@@ -1825,6 +2020,200 @@ export const ProduccionView: React.FC = () => {
           maquina={maquinaHistorialAbierta}
           onClose={() => setMaquinaHistorialAbierta(null)}
         />
+      )}
+
+      {/* Modal Definir Modelos de OP sin desglose */}
+      {defModelosModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs">
+          <div className="bg-[#1A202C] border border-[#2D3748] rounded-2xl p-4 sm:p-5 max-w-lg w-full shadow-2xl space-y-3">
+            <div className="flex items-center justify-between border-b border-[#2D3748] pb-2">
+              <div>
+                <h3 className="font-['Oswald',sans-serif] text-base font-bold text-white uppercase tracking-wide">
+                  Definir modelos · OP {defModelosModal.op}
+                </h3>
+                <p className="text-[11px] text-[#A0AEC0] truncate max-w-xs sm:max-w-md">
+                  {defModelosModal.baseDesc}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDefModelosModal(null)}
+                className="text-[#A0AEC0] hover:text-white p-1 rounded-lg cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+              {defModelosModal.rows.map((row, idx) => (
+                <div
+                  key={idx}
+                  className="p-2 rounded-lg bg-[#232A38] border border-[#4A5568] flex flex-wrap sm:flex-nowrap items-center gap-1.5"
+                >
+                  <span className="text-[10px] font-bold text-[#F6AD55] font-['IBM_Plex_Mono',monospace] w-5 shrink-0">
+                    #{idx + 1}
+                  </span>
+                  <input
+                    type="text"
+                    value={row.modelo}
+                    onChange={(e) =>
+                      setDefModelosModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              rows: prev.rows.map((r, i) => (i === idx ? { ...r, modelo: e.target.value } : r)),
+                            }
+                          : null
+                      )
+                    }
+                    placeholder="Nombre del modelo"
+                    className="flex-1 min-w-[140px] py-1.5 px-2 rounded-md border border-[#4A5568] bg-[#1A202C] text-xs text-white outline-none focus:border-[#F2A93B]"
+                  />
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min="0"
+                    value={row.cantidad}
+                    onChange={(e) =>
+                      setDefModelosModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              rows: prev.rows.map((r, i) => (i === idx ? { ...r, cantidad: e.target.value } : r)),
+                            }
+                          : null
+                      )
+                    }
+                    placeholder="Cant."
+                    className="w-24 py-1.5 px-2 rounded-md border border-[#4A5568] bg-[#1A202C] text-xs font-['IBM_Plex_Mono',monospace] text-white outline-none focus:border-[#F2A93B]"
+                  />
+                  <input
+                    type="text"
+                    value={row.sap}
+                    onChange={(e) =>
+                      setDefModelosModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              rows: prev.rows.map((r, i) => (i === idx ? { ...r, sap: e.target.value } : r)),
+                            }
+                          : null
+                      )
+                    }
+                    placeholder="SAP (opc.)"
+                    className="w-28 py-1.5 px-2 rounded-md border border-[#4A5568] bg-[#1A202C] text-xs font-['IBM_Plex_Mono',monospace] text-white outline-none focus:border-[#F2A93B]"
+                  />
+                  {defModelosModal.rows.length > 2 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDefModelosModal((prev) =>
+                          prev ? { ...prev, rows: prev.rows.filter((_, i) => i !== idx) } : null
+                        )
+                      }
+                      className="p-1 text-[#E53E3E] hover:bg-[#E53E3E]/20 rounded cursor-pointer"
+                      title="Quitar fila"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() =>
+                  setDefModelosModal((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          rows: [
+                            ...prev.rows,
+                            { modelo: `Modelo ${prev.rows.length + 1}`, cantidad: '', sap: '' },
+                          ],
+                        }
+                      : null
+                  )
+                }
+                className="text-xs text-[#93C5FD] hover:underline flex items-center gap-1 cursor-pointer"
+              >
+                <Plus size={13} />
+                <span>Agregar otro modelo</span>
+              </button>
+              {defModelosModal.totalOp > 0 && (
+                <span className="text-[10.5px] text-[#A0AEC0] font-['IBM_Plex_Mono',monospace]">
+                  Orden total: {defModelosModal.totalOp.toLocaleString('es-PE')} u
+                </span>
+              )}
+            </div>
+
+            <div className="flex gap-2 pt-2 border-t border-[#2D3748]">
+              <button
+                type="button"
+                disabled={guardandoModelos}
+                onClick={async () => {
+                  if (!defModelosModal) return;
+                  const limpios = defModelosModal.rows
+                    .map((r) => ({
+                      modelo: r.modelo.trim(),
+                      cantidad: parseInt(r.cantidad || '0', 10) || 0,
+                      sap: r.sap.trim(),
+                    }))
+                    .filter((r) => r.modelo.length > 0);
+                  if (limpios.length < 2) {
+                    showToast('error', 'Ingresa al menos 2 nombres de modelos');
+                    return;
+                  }
+                  const modelosList: CatalogoModelo[] = limpios.map((r) => ({
+                    modelo: r.modelo,
+                    descripcion: `${defModelosModal.baseDesc} - ${r.modelo}`,
+                    sap: r.sap,
+                    cantidadTotal: r.cantidad,
+                  }));
+                  const sumCant = modelosList.reduce((a, m) => a + (Number(m.cantidadTotal) || 0), 0);
+                  const nuevoItem: CatalogoItem = {
+                    op: defModelosModal.op,
+                    cliente: defModelosModal.cliente,
+                    cantidadTotal: sumCant > 0 ? sumCant : defModelosModal.totalOp,
+                    descripcion: `Varios modelos (${modelosList.length})`,
+                    sap: '',
+                    descripcionBase: defModelosModal.baseDesc,
+                    modelos: modelosList,
+                  };
+                  setGuardandoModelos(true);
+                  try {
+                    const res = await guardarItemCatalogo(nuevoItem);
+                    updateTurnoMaquina(defModelosModal.maquinaId, defModelosModal.inst, {
+                      modeloIdx: -1,
+                    });
+                    setDefModelosModal(null);
+                    showToast(
+                      'ok',
+                      res.synced
+                        ? `Modelos de OP ${nuevoItem.op} guardados en catálogo y nube`
+                        : `Modelos de OP ${nuevoItem.op} guardados en este dispositivo`
+                    );
+                  } finally {
+                    setGuardandoModelos(false);
+                  }
+                }}
+                className="flex-1 bg-[#F2A93B] text-[#12161F] py-2 px-3 rounded-xl text-xs font-bold uppercase font-['Oswald',sans-serif] tracking-wider cursor-pointer hover:brightness-105 disabled:opacity-60"
+              >
+                {guardandoModelos ? 'Guardando...' : 'Guardar modelos'}
+              </button>
+              <button
+                type="button"
+                disabled={guardandoModelos}
+                onClick={() => setDefModelosModal(null)}
+                className="py-2 px-4 rounded-xl border border-[#4A5568] text-[#CBD5E0] hover:text-white text-xs font-semibold cursor-pointer"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -45,7 +45,7 @@ import {
   copiarAlPortapapeles,
 } from '../../services/reports';
 import { getSupabaseConfig, sbLogin } from '../../services/supabase';
-import { Maquina, TurnoMaquina, RegistroTurno, TurnoDBRow, CatalogoItem, CatalogoModelo } from '../../types';
+import { Maquina, TurnoMaquina, RegistroTurno, TurnoDBRow } from '../../types';
 import {
   cargarTurnosNubeSnapshot,
   calcularAvanceOpEnTarjeta,
@@ -73,20 +73,9 @@ export const ProduccionView: React.FC = () => {
     reiniciarTurno,
     guardarTurnoDB,
     sincronizarCatalogoSupabase,
-    guardarItemCatalogo,
   } = useApp();
 
   const [sincronizandoCat, setSincronizandoCat] = useState(false);
-  const [guardandoModelos, setGuardandoModelos] = useState(false);
-  const [defModelosModal, setDefModelosModal] = useState<{
-    op: string;
-    maquinaId: string;
-    inst: number;
-    baseDesc: string;
-    cliente: string;
-    totalOp: number;
-    rows: { modelo: string; cantidad: string; sap: string }[];
-  } | null>(null);
 
   const [expandidos, setExpandidos] = useState<Record<string, boolean>>({});
   const [panelLoginOpen, setPanelLoginOpen] = useState(false);
@@ -1254,46 +1243,6 @@ export const ProduccionView: React.FC = () => {
                                       ))}
                                     </div>
                                   </div>
-                                ) : currentMatch &&
-                                  currentMatch.modelos &&
-                                  currentMatch.modelos.length === 1 &&
-                                  /\b(\d+\s*(modelos?|sabores?|dise[ñn]os?)|varios\s+modelos?|trisabor|bisabor|surtid[oa])\b/i.test(
-                                    currentMatch.descripcionBase || currentMatch.descripcion || ''
-                                  ) ? (
-                                  <div className="text-[10.5px] text-[#F6AD55] bg-[#3A2E1B]/40 border border-[#F2A93B]/40 rounded-lg px-2.5 py-2 leading-snug space-y-1.5">
-                                    <div>
-                                      Esta OP indica varios modelos en su título, pero en la nube/catálogo solo tiene 1 fila general cargada (sin desglose de modelos). Puedes reimportar el Excel con su hoja Modelos o definirlos aquí:
-                                    </div>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        const descTitulo = currentMatch.descripcionBase || currentMatch.descripcion || '';
-                                        const numMatch = descTitulo.match(/\b(\d+)\s*(?:modelos?|sabores?|dise[ñn]os?)\b/i);
-                                        const cantInicial = numMatch
-                                          ? Math.min(12, Math.max(2, parseInt(numMatch[1], 10)))
-                                          : /\btrisabor\b/i.test(descTitulo)
-                                          ? 3
-                                          : 2;
-                                        setDefModelosModal({
-                                          op: currentMatch.op,
-                                          maquinaId: m.id,
-                                          inst,
-                                          baseDesc: descTitulo,
-                                          cliente: currentMatch.cliente || '',
-                                          totalOp: Number(currentMatch.cantidadTotal) || 0,
-                                          rows: Array.from({ length: cantInicial }, (_, k) => ({
-                                            modelo: `Modelo ${k + 1}`,
-                                            cantidad: '',
-                                            sap: '',
-                                          })),
-                                        });
-                                      }}
-                                      className="inline-flex items-center gap-1 py-1 px-2.5 rounded-md bg-[#F2A93B] text-[#12161F] text-[11px] font-bold cursor-pointer hover:brightness-105"
-                                    >
-                                      <Plus size={12} />
-                                      <span>Definir modelos de OP {currentMatch.op}</span>
-                                    </button>
-                                  </div>
                                 ) : null}
 
                                 {currentMatch && (
@@ -1311,50 +1260,24 @@ export const ProduccionView: React.FC = () => {
                                           {resolverModelo(currentMatch, t.modeloIdx).descripcion} ·{' '}
                                           <span className="text-[#A0AEC0]">{currentMatch.cliente}</span>
                                         </span>
-                                        <div className="flex items-center gap-2 shrink-0">
-                                          {(!currentMatch.modelos || currentMatch.modelos.length <= 1) && (
-                                            <button
-                                              type="button"
-                                              onClick={() => {
-                                                const descTitulo = currentMatch.descripcionBase || currentMatch.descripcion || '';
-                                                setDefModelosModal({
-                                                  op: currentMatch.op,
-                                                  maquinaId: m.id,
-                                                  inst,
-                                                  baseDesc: descTitulo,
-                                                  cliente: currentMatch.cliente || '',
-                                                  totalOp: Number(currentMatch.cantidadTotal) || 0,
-                                                  rows: [
-                                                    { modelo: '', cantidad: '', sap: currentMatch.sap || '' },
-                                                    { modelo: '', cantidad: '', sap: '' },
-                                                  ],
-                                                });
-                                              }}
-                                              className="text-[10px] text-[#93C5FD] hover:underline cursor-pointer"
-                                              title="Agregar modelos a esta OP en el catálogo"
-                                            >
-                                              + Modelos
-                                            </button>
-                                          )}
-                                          {(() => {
-                                            const esMulti = Boolean(
-                                              currentMatch.modelos && currentMatch.modelos.length > 1
-                                            );
-                                            const mod =
-                                              t.modeloIdx >= 0 &&
-                                              currentMatch.modelos &&
-                                              currentMatch.modelos[t.modeloIdx];
-                                            if (m.tipoProducto === 'pt' && esMulti && !mod) return null;
-                                            const cant = mod && mod.cantidadTotal ? mod.cantidadTotal : currentMatch.cantidadTotal;
-                                            if (!cant || Number(cant) <= 0) return null;
-                                            return (
-                                              <span className="text-[#F2A93B] font-['IBM_Plex_Mono',monospace] font-bold text-[10.5px]">
-                                                Cant. {mod && mod.cantidadTotal ? 'modelo' : 'orden'}:{' '}
-                                                {Number(cant).toLocaleString('es-PE')} u
-                                              </span>
-                                            );
-                                          })()}
-                                        </div>
+                                        {(() => {
+                                          const esMulti = Boolean(
+                                            currentMatch.modelos && currentMatch.modelos.length > 1
+                                          );
+                                          const mod =
+                                            t.modeloIdx >= 0 &&
+                                            currentMatch.modelos &&
+                                            currentMatch.modelos[t.modeloIdx];
+                                          if (m.tipoProducto === 'pt' && esMulti && !mod) return null;
+                                          const cant = mod && mod.cantidadTotal ? mod.cantidadTotal : currentMatch.cantidadTotal;
+                                          if (!cant || Number(cant) <= 0) return null;
+                                          return (
+                                            <span className="text-[#F2A93B] font-['IBM_Plex_Mono',monospace] font-bold text-[10.5px]">
+                                              Cant. {mod && mod.cantidadTotal ? 'modelo' : 'orden'}:{' '}
+                                              {Number(cant).toLocaleString('es-PE')} u
+                                            </span>
+                                          );
+                                        })()}
                                       </>
                                     )}
                                   </div>
@@ -2020,200 +1943,6 @@ export const ProduccionView: React.FC = () => {
           maquina={maquinaHistorialAbierta}
           onClose={() => setMaquinaHistorialAbierta(null)}
         />
-      )}
-
-      {/* Modal Definir Modelos de OP sin desglose */}
-      {defModelosModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs">
-          <div className="bg-[#1A202C] border border-[#2D3748] rounded-2xl p-4 sm:p-5 max-w-lg w-full shadow-2xl space-y-3">
-            <div className="flex items-center justify-between border-b border-[#2D3748] pb-2">
-              <div>
-                <h3 className="font-['Oswald',sans-serif] text-base font-bold text-white uppercase tracking-wide">
-                  Definir modelos · OP {defModelosModal.op}
-                </h3>
-                <p className="text-[11px] text-[#A0AEC0] truncate max-w-xs sm:max-w-md">
-                  {defModelosModal.baseDesc}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setDefModelosModal(null)}
-                className="text-[#A0AEC0] hover:text-white p-1 rounded-lg cursor-pointer"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
-              {defModelosModal.rows.map((row, idx) => (
-                <div
-                  key={idx}
-                  className="p-2 rounded-lg bg-[#232A38] border border-[#4A5568] flex flex-wrap sm:flex-nowrap items-center gap-1.5"
-                >
-                  <span className="text-[10px] font-bold text-[#F6AD55] font-['IBM_Plex_Mono',monospace] w-5 shrink-0">
-                    #{idx + 1}
-                  </span>
-                  <input
-                    type="text"
-                    value={row.modelo}
-                    onChange={(e) =>
-                      setDefModelosModal((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              rows: prev.rows.map((r, i) => (i === idx ? { ...r, modelo: e.target.value } : r)),
-                            }
-                          : null
-                      )
-                    }
-                    placeholder="Nombre del modelo"
-                    className="flex-1 min-w-[140px] py-1.5 px-2 rounded-md border border-[#4A5568] bg-[#1A202C] text-xs text-white outline-none focus:border-[#F2A93B]"
-                  />
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min="0"
-                    value={row.cantidad}
-                    onChange={(e) =>
-                      setDefModelosModal((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              rows: prev.rows.map((r, i) => (i === idx ? { ...r, cantidad: e.target.value } : r)),
-                            }
-                          : null
-                      )
-                    }
-                    placeholder="Cant."
-                    className="w-24 py-1.5 px-2 rounded-md border border-[#4A5568] bg-[#1A202C] text-xs font-['IBM_Plex_Mono',monospace] text-white outline-none focus:border-[#F2A93B]"
-                  />
-                  <input
-                    type="text"
-                    value={row.sap}
-                    onChange={(e) =>
-                      setDefModelosModal((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              rows: prev.rows.map((r, i) => (i === idx ? { ...r, sap: e.target.value } : r)),
-                            }
-                          : null
-                      )
-                    }
-                    placeholder="SAP (opc.)"
-                    className="w-28 py-1.5 px-2 rounded-md border border-[#4A5568] bg-[#1A202C] text-xs font-['IBM_Plex_Mono',monospace] text-white outline-none focus:border-[#F2A93B]"
-                  />
-                  {defModelosModal.rows.length > 2 && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setDefModelosModal((prev) =>
-                          prev ? { ...prev, rows: prev.rows.filter((_, i) => i !== idx) } : null
-                        )
-                      }
-                      className="p-1 text-[#E53E3E] hover:bg-[#E53E3E]/20 rounded cursor-pointer"
-                      title="Quitar fila"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            <div className="flex items-center justify-between gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() =>
-                  setDefModelosModal((prev) =>
-                    prev
-                      ? {
-                          ...prev,
-                          rows: [
-                            ...prev.rows,
-                            { modelo: `Modelo ${prev.rows.length + 1}`, cantidad: '', sap: '' },
-                          ],
-                        }
-                      : null
-                  )
-                }
-                className="text-xs text-[#93C5FD] hover:underline flex items-center gap-1 cursor-pointer"
-              >
-                <Plus size={13} />
-                <span>Agregar otro modelo</span>
-              </button>
-              {defModelosModal.totalOp > 0 && (
-                <span className="text-[10.5px] text-[#A0AEC0] font-['IBM_Plex_Mono',monospace]">
-                  Orden total: {defModelosModal.totalOp.toLocaleString('es-PE')} u
-                </span>
-              )}
-            </div>
-
-            <div className="flex gap-2 pt-2 border-t border-[#2D3748]">
-              <button
-                type="button"
-                disabled={guardandoModelos}
-                onClick={async () => {
-                  if (!defModelosModal) return;
-                  const limpios = defModelosModal.rows
-                    .map((r) => ({
-                      modelo: r.modelo.trim(),
-                      cantidad: parseInt(r.cantidad || '0', 10) || 0,
-                      sap: r.sap.trim(),
-                    }))
-                    .filter((r) => r.modelo.length > 0);
-                  if (limpios.length < 2) {
-                    showToast('error', 'Ingresa al menos 2 nombres de modelos');
-                    return;
-                  }
-                  const modelosList: CatalogoModelo[] = limpios.map((r) => ({
-                    modelo: r.modelo,
-                    descripcion: `${defModelosModal.baseDesc} - ${r.modelo}`,
-                    sap: r.sap,
-                    cantidadTotal: r.cantidad,
-                  }));
-                  const sumCant = modelosList.reduce((a, m) => a + (Number(m.cantidadTotal) || 0), 0);
-                  const nuevoItem: CatalogoItem = {
-                    op: defModelosModal.op,
-                    cliente: defModelosModal.cliente,
-                    cantidadTotal: sumCant > 0 ? sumCant : defModelosModal.totalOp,
-                    descripcion: `Varios modelos (${modelosList.length})`,
-                    sap: '',
-                    descripcionBase: defModelosModal.baseDesc,
-                    modelos: modelosList,
-                  };
-                  setGuardandoModelos(true);
-                  try {
-                    const res = await guardarItemCatalogo(nuevoItem);
-                    updateTurnoMaquina(defModelosModal.maquinaId, defModelosModal.inst, {
-                      modeloIdx: -1,
-                    });
-                    setDefModelosModal(null);
-                    showToast(
-                      'ok',
-                      res.synced
-                        ? `Modelos de OP ${nuevoItem.op} guardados en catálogo y nube`
-                        : `Modelos de OP ${nuevoItem.op} guardados en este dispositivo`
-                    );
-                  } finally {
-                    setGuardandoModelos(false);
-                  }
-                }}
-                className="flex-1 bg-[#F2A93B] text-[#12161F] py-2 px-3 rounded-xl text-xs font-bold uppercase font-['Oswald',sans-serif] tracking-wider cursor-pointer hover:brightness-105 disabled:opacity-60"
-              >
-                {guardandoModelos ? 'Guardando...' : 'Guardar modelos'}
-              </button>
-              <button
-                type="button"
-                disabled={guardandoModelos}
-                onClick={() => setDefModelosModal(null)}
-                className="py-2 px-4 rounded-xl border border-[#4A5568] text-[#CBD5E0] hover:text-white text-xs font-semibold cursor-pointer"
-              >
-                Cancelar
-              </button>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );

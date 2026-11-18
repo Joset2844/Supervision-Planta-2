@@ -65,7 +65,6 @@ interface AppContextType {
 
   sincronizarCatalogoSupabase: (forzarCompleto?: boolean) => Promise<number>;
   subirCatalogoASupabase: (nuevo: CatalogoItem[]) => Promise<void>;
-  guardarItemCatalogo: (item: CatalogoItem) => Promise<{ synced: boolean }>;
   reiniciarTurno: () => void;
   guardarTurnoDB: (filasPersonalizadas?: FilaTurnoExcel[], forzarReemplazo?: boolean) => Promise<{ requiereConfirmacion?: boolean; existenteInfo?: any } | void>;
 }
@@ -379,45 +378,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [session, sincronizarCatalogoSupabase, showToast]
   );
 
-  const guardarItemCatalogo = useCallback(
-    async (item: CatalogoItem): Promise<{ synced: boolean }> => {
-      const norm = normalizarCatalogoItem(item) || item;
-      const base = catalogoRef.current.slice();
-      const idx = base.findIndex((c) => c.op === norm.op);
-      if (idx >= 0) {
-        base[idx] = norm;
-      } else {
-        base.push(norm);
-      }
-      catalogoRef.current = base;
-      saveStorageItem(STORAGE_KEYS.CATALOGO, base);
-      setCatalogoState(base);
-
-      if (session) {
-        const cfg = getSupabaseConfig(false);
-        if (cfg) {
-          try {
-            await sbFetch(
-              cfg,
-              'catalogo_op?on_conflict=op',
-              {
-                method: 'POST',
-                json: [{ op: norm.op, datos: norm }],
-                prefer: 'resolution=merge-duplicates,return=minimal',
-              },
-              session
-            );
-            return { synced: true };
-          } catch {
-            return { synced: false };
-          }
-        }
-      }
-      return { synced: false };
-    },
-    [session]
-  );
-
   // Auto sync on mount if online
   useEffect(() => {
     if (!navigator.onLine) return;
@@ -625,7 +585,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         removeToast,
         sincronizarCatalogoSupabase,
         subirCatalogoASupabase,
-        guardarItemCatalogo,
         reiniciarTurno,
         guardarTurnoDB,
       }}

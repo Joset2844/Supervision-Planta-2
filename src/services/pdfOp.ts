@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf';
-import { CatalogoItem } from '../types';
+import { CatalogoItem, CatalogoModelo } from '../types';
 import { formatearFechaTurno } from './reports';
 import { ConsultaOpResultado, TurnoOpResumen } from './opHistory';
 
@@ -66,7 +66,8 @@ function construirModelosResumen(
 
   const buscarOCrearDestino = (productoRaw: string, sapRaw: string): AcumModelo => {
     const sapClean = (sapRaw || '').trim().toLowerCase();
-    const prodClean = limpiarPliegoSufijo(productoRaw);
+    const normSpace = (s: string) => s.replace(/\s+/g, ' ').trim();
+    const prodClean = normSpace(limpiarPliegoSufijo(productoRaw));
     const prodLower = prodClean.toLowerCase();
 
     if (sapClean) {
@@ -77,16 +78,22 @@ function construirModelosResumen(
     if (prodLower) {
       const byExact = lista.find(
         (m) =>
-          m.nombre.toLowerCase() === prodLower ||
-          (m.modeloCorto && m.modeloCorto.toLowerCase() === prodLower)
+          normSpace(m.nombre).toLowerCase() === prodLower ||
+          (m.modeloCorto &&
+            (normSpace(m.modeloCorto).toLowerCase() === prodLower ||
+              prodLower.endsWith(` - ${normSpace(m.modeloCorto).toLowerCase()}`) ||
+              prodLower.endsWith(`-${normSpace(m.modeloCorto).toLowerCase()}`)))
       );
       if (byExact) return byExact;
 
-      const byPartial = lista.find(
-        (m) =>
-          (m.modeloCorto && prodLower.includes(m.modeloCorto.toLowerCase())) ||
-          (m.nombre && (prodLower.includes(m.nombre.toLowerCase()) || m.nombre.toLowerCase().includes(prodLower)))
-      );
+      const byPartial = [...lista]
+        .sort((a, b) => b.nombre.length - a.nombre.length)
+        .find(
+          (m) =>
+            m.nombre &&
+            (prodLower.includes(normSpace(m.nombre).toLowerCase()) ||
+              normSpace(m.nombre).toLowerCase().includes(prodLower))
+        );
       if (byPartial) return byPartial;
     }
 
@@ -164,15 +171,28 @@ export function exportarPdfReporteOp(params: {
   op: string;
   catalogMatch: CatalogoItem | null;
   resultado: ConsultaOpResultado;
+  modeloFiltro?: CatalogoModelo | null;
 }): { nombreArchivo: string } {
-  const { op, catalogMatch, resultado } = params;
+  const { op, catalogMatch, resultado, modeloFiltro } = params;
   const { totales, porMaquina, turnosAnteriores, turnoActualResumen } = resultado;
+
+  const catalogParaPdf: CatalogoItem | null = modeloFiltro
+    ? {
+        op,
+        cliente: catalogMatch?.cliente || '',
+        descripcion: modeloFiltro.descripcion || catalogMatch?.descripcion || '',
+        descripcionBase: modeloFiltro.descripcion || catalogMatch?.descripcionBase || '',
+        sap: modeloFiltro.sap || '',
+        cantidadTotal: modeloFiltro.cantidadTotal,
+        modelos: [modeloFiltro],
+      }
+    : catalogMatch;
 
   const todosLosTurnos: TurnoOpResumen[] = [];
   if (turnoActualResumen) todosLosTurnos.push(turnoActualResumen);
   todosLosTurnos.push(...turnosAnteriores);
 
-  const modelos = construirModelosResumen(catalogMatch, todosLosTurnos);
+  const modelos = construirModelosResumen(catalogParaPdf, todosLosTurnos);
   const ppMaquinas = porMaquina.filter((m) => m.tipoProducto === 'pp');
 
   const doc = new jsPDF({
@@ -208,10 +228,16 @@ export function exportarPdfReporteOp(params: {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(13.5);
   doc.setTextColor(255, 255, 255);
-  doc.text(`REPORTE DE PRODUCCIÓN — OP ${op}`, marginX + 7, y + 6.8);
+  const tituloBanner = modeloFiltro
+    ? `REPORTE DE PRODUCCIÓN — OP ${op} (${modeloFiltro.modelo || modeloFiltro.descripcion || 'Modelo'})`
+    : `REPORTE DE PRODUCCIÓN — OP ${op}`;
+  const tituloLines = doc.splitTextToSize(tituloBanner, 175) as string[];
+  doc.text(tituloLines[0] || tituloBanner, marginX + 7, y + 6.8);
 
-  const cantidadOrden = Number(catalogMatch?.cantidadTotal || 0);
-  const descBase = catalogMatch
+  const cantidadOrden = Number(catalogParaPdf?.cantidadTotal || 0);
+  const descBase = modeloFiltro
+    ? `Modelo: ${modeloFiltro.descripcion || modeloFiltro.modelo}${modeloFiltro.sap ? ` · SAP ${modeloFiltro.sap}` : ''}`
+    : catalogMatch
     ? catalogMatch.descripcionBase || catalogMatch.descripcion || ''
     : 'Registro histórico de producción';
   const clienteTxt = catalogMatch?.cliente ? `Cliente: ${catalogMatch.cliente}` : '';
@@ -850,8 +876,11 @@ export function exportarPdfReporteOp(params: {
   }
 
   const safeOp = op.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const safeMod = modeloFiltro
+    ? '_' + (modeloFiltro.modelo || modeloFiltro.sap || 'modelo').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 24)
+    : '';
   const hoy = new Date().toISOString().slice(0, 10);
-  const nombreArchivo = `reporte_OP_${safeOp}_${hoy}.pdf`;
+  const nombreArchivo = `reporte_OP_${safeOp}${safeMod}_${hoy}.pdf`;
   doc.save(nombreArchivo);
 
   return { nombreArchivo };

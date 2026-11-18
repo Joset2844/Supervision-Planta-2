@@ -1,5 +1,6 @@
 import {
   CatalogoItem,
+  CatalogoModelo,
   HistorialTurnoLocal,
   Maquina,
   MetaTurno,
@@ -781,6 +782,240 @@ function limpiarSufijoPliego(texto: string): string {
     .trim();
 }
 
+export function filaCoincideConModelo(
+  fila: { sap?: string; producto?: string; descripcion?: string },
+  modelo: CatalogoModelo
+): boolean {
+  const modSap = (modelo.sap || '').trim().toLowerCase();
+  const rSap = (fila.sap || '').trim().toLowerCase();
+  if (modSap && rSap) {
+    return modSap === rSap;
+  }
+
+  const normSpace = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+  const modDesc = normSpace(modelo.descripcion || '');
+  const modCorto = normSpace(modelo.modelo || '');
+  const rProd = normSpace(limpiarSufijoPliego(fila.producto || fila.descripcion || ''));
+  if (!rProd) return false;
+
+  if (modDesc && rProd === modDesc) {
+    return true;
+  }
+  if (
+    modCorto &&
+    (rProd === modCorto ||
+      rProd.endsWith(` - ${modCorto}`) ||
+      rProd.endsWith(`-${modCorto}`))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export interface ModeloOpResumen {
+  idx: number;
+  nombre: string;
+  modeloCorto: string;
+  sap: string;
+  cantidadOrden: number;
+  ptAnterior: number;
+  ptActual: number;
+  ptAcumulado: number;
+  ptMerma: number;
+  pctPT: number;
+  restantePT: number;
+  ppPorMaquina: MaquinaPPSum[];
+  sinTipoAcumulado: number;
+  turnosCount: number;
+}
+
+export function calcularResumenModelosOp(
+  resultado: ConsultaOpResultado,
+  catalogMatch: CatalogoItem | null
+): ModeloOpResumen[] {
+  if (!catalogMatch || !catalogMatch.modelos || catalogMatch.modelos.length === 0) {
+    return [];
+  }
+
+  const todosTurnos: TurnoOpResumen[] = [];
+  if (resultado.turnoActualResumen) todosTurnos.push(resultado.turnoActualResumen);
+  todosTurnos.push(...resultado.turnosAnteriores);
+
+  return catalogMatch.modelos.map((mo, idx) => {
+    const cantidadOrden = Number(mo.cantidadTotal) || 0;
+    let ptAnterior = 0;
+    let ptActual = 0;
+    let ptMerma = 0;
+    let sinTipoAcumulado = 0;
+    const ppMap = new Map<string, MaquinaPPSum>();
+    const turnosSet = new Set<string>();
+
+    todosTurnos.forEach((t) => {
+      const esActual = t.fuente === 'actual';
+      let matchedInTurno = false;
+      t.filas.forEach((f) => {
+        if (!filaCoincideConModelo(f, mo)) return;
+        matchedInTurno = true;
+        if (f.tipoProducto === 'pt') {
+          if (esActual) ptActual += f.total;
+          else ptAnterior += f.total;
+          ptMerma += f.merma;
+        } else if (f.tipoProducto === 'pp') {
+          const mKey = (f.maquina || 'Sin máquina').trim().toLowerCase();
+          if (!ppMap.has(mKey)) {
+            ppMap.set(mKey, {
+              maquina: f.maquina || 'Sin máquina',
+              codigoMaquina: f.codigoMaquina || '',
+              total: 0,
+              merma: 0,
+            });
+          }
+          const entry = ppMap.get(mKey)!;
+          entry.total += f.total;
+          entry.merma += f.merma;
+        } else {
+          sinTipoAcumulado += f.total;
+        }
+      });
+      if (matchedInTurno) turnosSet.add(t.key);
+    });
+
+    const ptAcumulado = ptAnterior + ptActual;
+    const pctPT = cantidadOrden > 0 ? (ptAcumulado / cantidadOrden) * 100 : 0;
+    const restantePT = cantidadOrden > 0 ? cantidadOrden - ptAcumulado : 0;
+
+    return {
+      idx,
+      nombre: mo.descripcion || mo.modelo || `Modelo ${idx + 1}`,
+      modeloCorto: mo.modelo || '',
+      sap: (mo.sap || '').trim(),
+      cantidadOrden,
+      ptAnterior,
+      ptActual,
+      ptAcumulado,
+      ptMerma,
+      pctPT,
+      restantePT,
+      ppPorMaquina: Array.from(ppMap.values()),
+      sinTipoAcumulado,
+      turnosCount: turnosSet.size,
+    };
+  });
+}
+
+export function filtrarResultadoOpPorModelo(
+  resultado: ConsultaOpResultado,
+  modelo: CatalogoModelo
+): ConsultaOpResultado {
+  const filtrarTurno = (t: TurnoOpResumen): TurnoOpResumen | null => {
+    const filasFiltradas = t.filas.filter((f) => filaCoincideConModelo(f, modelo));
+    if (filasFiltradas.length === 0) return null;
+    return construirTurnoOpResumen(t.key, t.fecha, t.tipo, t.fuente, filasFiltradas);
+  };
+
+  const turnosAnteriores = resultado.turnosAnteriores
+    .map(filtrarTurno)
+    .filter((t): t is TurnoOpResumen => t !== null);
+
+  const turnoActualResumen = resultado.turnoActualResumen
+    ? filtrarTurno(resultado.turnoActualResumen)
+    : null;
+
+  const totales: TotalesOpSeparados = {
+    antPP: 0,
+    mermaAntPP: 0,
+    actualPP: turnoActualResumen?.totalPP || 0,
+    mermaActualPP: turnoActualResumen?.mermaPP || 0,
+    acumPP: 0,
+    mermaAcumPP: 0,
+    antPT: 0,
+    mermaAntPT: 0,
+    actualPT: turnoActualResumen?.totalPT || 0,
+    mermaActualPT: turnoActualResumen?.mermaPT || 0,
+    acumPT: 0,
+    mermaAcumPT: 0,
+    antSinTipo: 0,
+    mermaAntSinTipo: 0,
+    actualSinTipo: turnoActualResumen?.totalSinTipo || 0,
+    mermaActualSinTipo: turnoActualResumen?.mermaSinTipo || 0,
+    acumSinTipo: 0,
+    mermaAcumSinTipo: 0,
+  };
+
+  turnosAnteriores.forEach((t) => {
+    totales.antPP += t.totalPP;
+    totales.mermaAntPP += t.mermaPP;
+    totales.antPT += t.totalPT;
+    totales.mermaAntPT += t.mermaPT;
+    totales.antSinTipo += t.totalSinTipo;
+    totales.mermaAntSinTipo += t.mermaSinTipo;
+  });
+
+  totales.acumPP = totales.antPP + totales.actualPP;
+  totales.mermaAcumPP = totales.mermaAntPP + totales.mermaActualPP;
+  totales.acumPT = totales.antPT + totales.actualPT;
+  totales.mermaAcumPT = totales.mermaAntPT + totales.mermaActualPT;
+  totales.acumSinTipo = totales.antSinTipo + totales.actualSinTipo;
+  totales.mermaAcumSinTipo = totales.mermaAntSinTipo + totales.mermaActualSinTipo;
+
+  const maqMap = new Map<string, MaquinaTotalOp & { _turnosSet: Set<string> }>();
+  const acumular = (t: TurnoOpResumen, esActual: boolean) => {
+    t.filas.forEach((f) => {
+      const mKey = `${f.maquina.trim().toLowerCase()}||${f.tipoProducto}`;
+      if (!maqMap.has(mKey)) {
+        maqMap.set(mKey, {
+          key: mKey,
+          maquina: f.maquina,
+          codigoMaquina: f.codigoMaquina,
+          tipoProducto: f.tipoProducto,
+          totalAnterior: 0,
+          mermaAnterior: 0,
+          totalActual: 0,
+          mermaActual: 0,
+          totalAcumulado: 0,
+          mermaAcumulada: 0,
+          turnosCount: 0,
+          _turnosSet: new Set<string>(),
+        });
+      }
+      const entry = maqMap.get(mKey)!;
+      if (!entry.codigoMaquina && f.codigoMaquina) entry.codigoMaquina = f.codigoMaquina;
+      if (esActual) {
+        entry.totalActual += f.total;
+        entry.mermaActual += f.merma;
+      } else {
+        entry.totalAnterior += f.total;
+        entry.mermaAnterior += f.merma;
+      }
+      entry.totalAcumulado = entry.totalAnterior + entry.totalActual;
+      entry.mermaAcumulada = entry.mermaAnterior + entry.mermaActual;
+      entry._turnosSet.add(t.key);
+      entry.turnosCount = entry._turnosSet.size;
+    });
+  };
+
+  turnosAnteriores.forEach((t) => acumular(t, false));
+  if (turnoActualResumen) acumular(turnoActualResumen, true);
+
+  const pesoTipo = (tp: string) => (tp === 'pt' ? 0 : tp === 'pp' ? 1 : 2);
+  const porMaquina: MaquinaTotalOp[] = Array.from(maqMap.values())
+    .map(({ _turnosSet, ...rest }) => rest)
+    .sort((a, b) => {
+      const pt = pesoTipo(a.tipoProducto) - pesoTipo(b.tipoProducto);
+      if (pt !== 0) return pt;
+      return b.totalAcumulado - a.totalAcumulado;
+    });
+
+  return {
+    turnosAnteriores,
+    turnoActualResumen,
+    porMaquina,
+    totales,
+    nubeDisponible: resultado.nubeDisponible,
+    nubeMensaje: resultado.nubeMensaje,
+  };
+}
+
 export function calcularAvanceOpEnTarjeta(params: {
   op: string;
   modeloIdx: number;
@@ -809,13 +1044,20 @@ export function calcularAvanceOpEnTarjeta(params: {
   const opClean = (op || '').trim();
   if (!opClean || !catalogMatch || maquina.tipoProducto === 'pp') return null;
 
+  const tieneMultiModelos = Boolean(catalogMatch.modelos && catalogMatch.modelos.length > 1);
   const mod =
     modeloIdx >= 0 && catalogMatch.modelos && catalogMatch.modelos[modeloIdx]
       ? catalogMatch.modelos[modeloIdx]
       : null;
+
+  // En PT, si la OP tiene varios modelos y no se seleccionó modelo aún, no mezclar cantidades globales
+  if (maquina.tipoProducto === 'pt' && tieneMultiModelos && !mod) {
+    return null;
+  }
+
   const metaModelo = Number(mod?.cantidadTotal || 0);
   const metaOrden = Number(catalogMatch.cantidadTotal || 0);
-  const esPorModelo = metaModelo > 0;
+  const esPorModelo = tieneMultiModelos && !!mod;
   const meta = esPorModelo ? metaModelo : metaOrden;
 
   if (!meta || meta <= 0) return null;
@@ -829,21 +1071,7 @@ export function calcularAvanceOpEnTarjeta(params: {
 
   const coincideModelo = (sapRaw?: string, prodRaw?: string): boolean => {
     if (!esPorModelo || !mod) return true;
-    const modSap = (mod.sap || '').trim().toLowerCase();
-    const rSap = (sapRaw || '').trim().toLowerCase();
-    if (modSap && rSap && modSap === rSap) return true;
-
-    const modDesc = (mod.descripcion || '').trim().toLowerCase();
-    const modCorto = (mod.modelo || '').trim().toLowerCase();
-    const rProd = limpiarSufijoPliego(prodRaw || '').toLowerCase();
-    if (!rProd) return false;
-    if (modDesc && (rProd === modDesc || rProd.includes(modDesc) || modDesc.includes(rProd))) {
-      return true;
-    }
-    if (modCorto && (rProd === modCorto || rProd.includes(modCorto))) {
-      return true;
-    }
-    return false;
+    return filaCoincideConModelo({ sap: sapRaw, producto: prodRaw }, mod);
   };
 
   const coincideAlcanceFila = (
@@ -937,5 +1165,6 @@ export function calcularAvanceOpEnTarjeta(params: {
     nubeUsada: nubeDisponible,
   };
 }
+
 
 

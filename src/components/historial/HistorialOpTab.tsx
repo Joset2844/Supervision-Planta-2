@@ -20,6 +20,8 @@ import {
   consultarHistorialOp,
   ConsultaOpResultado,
   TurnoOpResumen,
+  calcularResumenModelosOp,
+  filtrarResultadoOpPorModelo,
 } from '../../services/opHistory';
 import { exportarPdfReporteOp } from '../../services/pdfOp';
 import { CatalogoItem } from '../../types';
@@ -42,6 +44,7 @@ export const HistorialOpTab: React.FC = () => {
   const [opConsultada, setOpConsultada] = useState('');
   const [cargando, setCargando] = useState(false);
   const [resultado, setResultado] = useState<ConsultaOpResultado | null>(null);
+  const [modeloSeleccionadoIdx, setModeloSeleccionadoIdx] = useState<number>(-1);
 
   // Autocomplete suggestions from catalog
   const suggestions = useMemo(() => {
@@ -87,9 +90,12 @@ export const HistorialOpTab: React.FC = () => {
   );
 
   const ejecutarConsulta = useCallback(
-    async (opObjetivo: string) => {
+    async (opObjetivo: string, preservarModelo = false) => {
       const limpia = opObjetivo.trim();
       if (!limpia) return;
+      if (!preservarModelo) {
+        setModeloSeleccionadoIdx(-1);
+      }
       setOpConsultada(limpia);
       setShowSuggestions(false);
       setCargando(true);
@@ -134,31 +140,51 @@ export const HistorialOpTab: React.FC = () => {
     ejecutarConsulta(typed);
   };
 
-  const totales = resultado?.totales;
-  const cantidadOrden = Number(catalogMatch?.cantidadTotal || 0);
+  const modelosDisponibles = useMemo(() => catalogMatch?.modelos || [], [catalogMatch]);
+  const tieneMultiModelos = modelosDisponibles.length > 1;
+  const modeloActivo = useMemo(() => {
+    if (!tieneMultiModelos || modeloSeleccionadoIdx < 0) return null;
+    return modelosDisponibles[modeloSeleccionadoIdx] || null;
+  }, [tieneMultiModelos, modeloSeleccionadoIdx, modelosDisponibles]);
+
+  const resultadoVista = useMemo(() => {
+    if (!resultado) return null;
+    return modeloActivo ? filtrarResultadoOpPorModelo(resultado, modeloActivo) : resultado;
+  }, [resultado, modeloActivo]);
+
+  const resumenModelos = useMemo(() => {
+    if (!resultado || !tieneMultiModelos) return [];
+    return calcularResumenModelosOp(resultado, catalogMatch);
+  }, [resultado, tieneMultiModelos, catalogMatch]);
+
+  const totales = resultadoVista?.totales;
+  const cantidadOrden = modeloActivo
+    ? Number(modeloActivo.cantidadTotal || 0)
+    : Number(catalogMatch?.cantidadTotal || 0);
   const pctPT = cantidadOrden > 0 && totales ? (totales.acumPT / cantidadOrden) * 100 : 0;
   const pendientePT = cantidadOrden > 0 && totales ? cantidadOrden - totales.acumPT : 0;
 
   const todosLosTurnos: TurnoOpResumen[] = useMemo(() => {
-    if (!resultado) return [];
+    if (!resultadoVista) return [];
     const lista: TurnoOpResumen[] = [];
-    if (resultado.turnoActualResumen) lista.push(resultado.turnoActualResumen);
-    lista.push(...resultado.turnosAnteriores);
+    if (resultadoVista.turnoActualResumen) lista.push(resultadoVista.turnoActualResumen);
+    lista.push(...resultadoVista.turnosAnteriores);
     return lista;
-  }, [resultado]);
+  }, [resultadoVista]);
 
   const ppPorMaquina = useMemo(
-    () => (resultado?.porMaquina || []).filter((m) => m.tipoProducto === 'pp'),
-    [resultado]
+    () => (resultadoVista?.porMaquina || []).filter((m) => m.tipoProducto === 'pp'),
+    [resultadoVista]
   );
 
   const handleDescargarPdfOp = () => {
-    if (!opConsultada || !resultado) return;
+    if (!opConsultada || !resultadoVista) return;
     try {
       const { nombreArchivo } = exportarPdfReporteOp({
         op: opConsultada,
         catalogMatch,
-        resultado,
+        resultado: resultadoVista,
+        modeloFiltro: modeloActivo,
       });
       showToast('ok', `PDF generado: ${nombreArchivo}`);
     } catch (err) {
@@ -180,7 +206,7 @@ export const HistorialOpTab: React.FC = () => {
           </div>
           {opConsultada && (
             <div className="flex items-center gap-2 flex-wrap">
-              {resultado && !cargando && (
+              {resultadoVista && !cargando && (
                 <button
                   type="button"
                   onClick={handleDescargarPdfOp}
@@ -188,13 +214,13 @@ export const HistorialOpTab: React.FC = () => {
                   title="Descargar reporte completo de esta OP en PDF"
                 >
                   <FileDown size={13} />
-                  <span>Reporte PDF</span>
+                  <span>{modeloActivo ? 'Reporte PDF (Modelo)' : 'Reporte PDF'}</span>
                 </button>
               )}
               <button
                 type="button"
                 disabled={cargando}
-                onClick={() => ejecutarConsulta(opConsultada)}
+                onClick={() => ejecutarConsulta(opConsultada, true)}
                 className="flex items-center gap-1.5 py-1 px-2.5 rounded-lg border border-[#4A5568] bg-[#232A38] text-[#CBD5E0] hover:text-white text-xs font-semibold cursor-pointer disabled:opacity-50"
               >
                 <RefreshCw size={12} className={cargando ? 'animate-spin' : ''} />
@@ -325,18 +351,18 @@ export const HistorialOpTab: React.FC = () => {
             <strong className="text-[#F2A93B] font-['IBM_Plex_Mono',monospace]">{opConsultada}</strong>…
           </p>
         </div>
-      ) : resultado && totales ? (
+      ) : resultadoVista && totales ? (
         <>
           {/* Cloud status notice if offline or unauthenticated */}
-          {resultado.nubeMensaje && (
+          {resultadoVista.nubeMensaje && (
             <div className="flex items-center gap-2 text-xs text-[#F6AD55] bg-[#3A2E1B]/50 border border-[#F2A93B]/30 rounded-xl px-3.5 py-2.5">
               <AlertCircle size={15} className="shrink-0" />
-              <span>{resultado.nubeMensaje}</span>
+              <span>{resultadoVista.nubeMensaje}</span>
             </div>
           )}
 
           {/* Catalog Info Banner for searched OP */}
-          <div className="bg-[#1A202C] border border-[#2D3748] rounded-2xl p-4 shadow-sm space-y-2">
+          <div className="bg-[#1A202C] border border-[#2D3748] rounded-2xl p-4 shadow-sm space-y-2.5">
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -348,19 +374,31 @@ export const HistorialOpTab: React.FC = () => {
                       Cliente: {catalogMatch.cliente}
                     </span>
                   )}
+                  {modeloActivo && (
+                    <span className="text-xs font-bold text-[#12161F] bg-[#F2A93B] px-2.5 py-1 rounded-lg">
+                      Modelo: {modeloActivo.modelo || modeloActivo.descripcion}
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs sm:text-sm text-white font-medium mt-1.5 mb-0">
-                  {catalogMatch
+                  {modeloActivo
+                    ? modeloActivo.descripcion || modeloActivo.modelo
+                    : catalogMatch
                     ? catalogMatch.descripcionBase || catalogMatch.descripcion
                     : 'OP no encontrada en el catálogo local (mostrando registros de producción)'}
                 </p>
+                {modeloActivo?.sap && (
+                  <p className="text-[11px] text-[#A0AEC0] font-['IBM_Plex_Mono',monospace] mt-0.5 mb-0">
+                    SAP: {modeloActivo.sap}
+                  </p>
+                )}
               </div>
 
               {cantidadOrden > 0 && (
                 <div className="bg-[#12161F] border border-[#F2A93B]/40 rounded-xl px-3 py-2 text-right shrink-0">
                   <div className="text-[10px] uppercase tracking-wider text-[#A0AEC0] font-semibold flex items-center justify-end gap-1">
                     <Package size={11} className="text-[#F2A93B]" />
-                    <span>Cantidad Orden</span>
+                    <span>{modeloActivo ? 'Cantidad del Modelo' : 'Cantidad Orden'}</span>
                   </div>
                   <div className="font-['IBM_Plex_Mono',monospace] text-sm sm:text-base font-bold text-[#F6AD55] tabular-nums">
                     {cantidadOrden.toLocaleString('es-PE')} u
@@ -369,27 +407,159 @@ export const HistorialOpTab: React.FC = () => {
               )}
             </div>
 
-            {catalogMatch && catalogMatch.modelos && catalogMatch.modelos.length > 1 && (
-              <div className="pt-2 border-t border-[#2D3748] flex items-center gap-1.5 flex-wrap">
-                <span className="text-[10.5px] text-[#A0AEC0] font-semibold uppercase tracking-wide mr-1">
-                  Modelos ({catalogMatch.modelos.length}):
-                </span>
-                {catalogMatch.modelos.map((mo, idx) => (
-                  <span
-                    key={idx}
-                    className="text-[11px] bg-[#232A38] border border-[#4A5568] text-[#CBD5E0] px-2 py-0.5 rounded-md"
-                  >
-                    {mo.descripcion || `Modelo ${idx + 1}`}
-                    {mo.cantidadTotal && Number(mo.cantidadTotal) > 0 ? (
-                      <strong className="text-[#F6AD55] font-['IBM_Plex_Mono',monospace] ml-1">
-                        ({Number(mo.cantidadTotal).toLocaleString('es-PE')} u)
-                      </strong>
-                    ) : null}
+            {tieneMultiModelos && (
+              <div className="pt-2.5 border-t border-[#2D3748] space-y-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-[10.5px] text-[#CBD5E0] font-semibold uppercase tracking-wide">
+                    Filtrar por modelo ({modelosDisponibles.length}) · Cada modelo tiene su propia cantidad en PT:
                   </span>
-                ))}
+                  {modeloActivo && (
+                    <button
+                      type="button"
+                      onClick={() => setModeloSeleccionadoIdx(-1)}
+                      className="text-[11px] text-[#63B3ED] hover:text-white underline cursor-pointer bg-transparent border-0 p-0"
+                    >
+                      Ver todos los modelos
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setModeloSeleccionadoIdx(-1)}
+                    className={`text-[11px] px-2.5 py-1 rounded-lg border font-semibold cursor-pointer transition-colors ${
+                      modeloSeleccionadoIdx === -1
+                        ? 'bg-[#F2A93B] text-[#12161F] border-[#F2A93B] font-bold'
+                        : 'bg-[#232A38] text-[#CBD5E0] border-[#4A5568] hover:border-[#F2A93B]/60 hover:text-white'
+                    }`}
+                  >
+                    Todos ({modelosDisponibles.length})
+                  </button>
+                  {modelosDisponibles.map((mo, idx) => {
+                    const isActive = modeloSeleccionadoIdx === idx;
+                    const etiqueta = mo.modelo || mo.descripcion || `Modelo ${idx + 1}`;
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => setModeloSeleccionadoIdx(idx)}
+                        className={`text-[11px] px-2.5 py-1 rounded-lg border cursor-pointer transition-colors text-left ${
+                          isActive
+                            ? 'bg-[#F2A93B] text-[#12161F] border-[#F2A93B] font-bold shadow-xs'
+                            : 'bg-[#232A38] border-[#4A5568] text-[#CBD5E0] hover:border-[#F2A93B]/60 hover:text-white'
+                        }`}
+                      >
+                        <span>{etiqueta}</span>
+                        {mo.sap && (
+                          <span
+                            className={`font-['IBM_Plex_Mono',monospace] text-[10px] ml-1.5 ${
+                              isActive ? 'text-[#12161F]/80' : 'text-[#A0AEC0]'
+                            }`}
+                          >
+                            [{mo.sap}]
+                          </span>
+                        )}
+                        {mo.cantidadTotal && Number(mo.cantidadTotal) > 0 ? (
+                          <span
+                            className={`font-['IBM_Plex_Mono',monospace] font-bold ml-1.5 ${
+                              isActive ? 'text-[#12161F]' : 'text-[#F6AD55]'
+                            }`}
+                          >
+                            ({Number(mo.cantidadTotal).toLocaleString('es-PE')} u)
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
           </div>
+
+          {/* Per-model PT breakdown when viewing All models on a multi-model OP */}
+          {tieneMultiModelos && !modeloActivo && resumenModelos.length > 0 && (
+            <div className="bg-[#1A202C] border border-[#2D3748] rounded-2xl p-3.5 sm:p-4 shadow-sm space-y-2.5">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <Package size={15} className="text-[#63B3ED]" />
+                  <span className="text-xs uppercase tracking-wider text-white font-bold font-['Oswald',sans-serif]">
+                    Avance PT por Modelo ({resumenModelos.length})
+                  </span>
+                </div>
+                <span className="text-[11px] text-[#A0AEC0]">
+                  Toca un modelo para filtrar el detalle y el PDF
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                {resumenModelos.map((rm) => (
+                  <button
+                    key={rm.idx}
+                    type="button"
+                    onClick={() => setModeloSeleccionadoIdx(rm.idx)}
+                    className="text-left bg-[#12161F] border border-[#2D3748] hover:border-[#F2A93B]/60 rounded-xl p-3 space-y-1.5 cursor-pointer transition-colors"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-white truncate">
+                          {rm.modeloCorto || rm.nombre}
+                        </div>
+                        {rm.sap && (
+                          <div className="text-[10px] text-[#A0AEC0] font-['IBM_Plex_Mono',monospace]">
+                            SAP {rm.sap}
+                          </div>
+                        )}
+                      </div>
+                      {rm.cantidadOrden > 0 && (
+                        <span
+                          className={`text-[11px] font-bold font-['IBM_Plex_Mono',monospace] shrink-0 ${
+                            rm.pctPT >= 100 ? 'text-[#48BB78]' : 'text-[#93C5FD]'
+                          }`}
+                        >
+                          {rm.pctPT.toFixed(1)}%
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-baseline justify-between gap-2 font-['IBM_Plex_Mono',monospace]">
+                      <span className="text-sm font-bold text-[#63B3ED] tabular-nums">
+                        {rm.ptAcumulado.toLocaleString('es-PE')} u
+                      </span>
+                      {rm.cantidadOrden > 0 && (
+                        <span className="text-[11px] text-[#F6AD55] tabular-nums">
+                          de {rm.cantidadOrden.toLocaleString('es-PE')} u
+                        </span>
+                      )}
+                    </div>
+
+                    {rm.cantidadOrden > 0 && (
+                      <div className="w-full bg-[#1A202C] rounded-full h-1.5 overflow-hidden border border-[#2D3748]">
+                        <div
+                          className={`h-full rounded-full transition-all ${
+                            rm.pctPT >= 100 ? 'bg-[#38A169]' : 'bg-[#63B3ED]'
+                          }`}
+                          style={{ width: `${Math.min(100, Math.max(0, rm.pctPT))}%` }}
+                        />
+                      </div>
+                    )}
+
+                    <div className="text-[10px] text-[#A0AEC0] font-['IBM_Plex_Mono',monospace] flex items-center justify-between gap-1">
+                      <span>
+                        {rm.cantidadOrden > 0
+                          ? rm.restantePT > 0
+                            ? `Faltan ${rm.restantePT.toLocaleString('es-PE')} u`
+                            : rm.restantePT < 0
+                            ? `+${Math.abs(rm.restantePT).toLocaleString('es-PE')} u extra`
+                            : 'Completado 100%'
+                          : 'Sin meta'}
+                      </span>
+                      <span>{rm.turnosCount} t.</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Separated Totals: PT (summed) & PP (by machine small cards) */}
           <div className="space-y-3">
@@ -406,7 +576,9 @@ export const HistorialOpTab: React.FC = () => {
                       PT
                     </span>
                     <span className="text-xs uppercase tracking-wider text-white font-bold font-['Oswald',sans-serif]">
-                      Producto Terminado
+                      {modeloActivo
+                        ? `Producto Terminado — ${modeloActivo.modelo || modeloActivo.descripcion}`
+                        : 'Producto Terminado'}
                     </span>
                   </div>
                   {cantidadOrden > 0 && (
@@ -553,10 +725,11 @@ export const HistorialOpTab: React.FC = () => {
             </div>
           </div>
 
-          {resultado.porMaquina.length === 0 && todosLosTurnos.length === 0 ? (
+          {resultadoVista.porMaquina.length === 0 && todosLosTurnos.length === 0 ? (
             <div className="border border-dashed border-[#4A5568] rounded-2xl p-8 text-center text-xs sm:text-sm text-[#CBD5E0] bg-[#1A202C]">
               No se encontraron registros de producción para la OP{' '}
-              <strong className="text-[#F2A93B] font-['IBM_Plex_Mono',monospace]">{opConsultada}</strong>{' '}
+              <strong className="text-[#F2A93B] font-['IBM_Plex_Mono',monospace]">{opConsultada}</strong>
+              {modeloActivo ? ` (${modeloActivo.modelo || modeloActivo.descripcion})` : ''}{' '}
               en turnos guardados ni en el turno actual.
             </div>
           ) : (
@@ -567,13 +740,13 @@ export const HistorialOpTab: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <Layers size={16} className="text-[#F2A93B]" />
                     <h3 className="m-0 text-xs sm:text-sm font-bold text-white uppercase font-['Oswald',sans-serif] tracking-wide">
-                      Totales por Máquina ({resultado.porMaquina.length})
+                      Totales por Máquina ({resultadoVista.porMaquina.length})
                     </h3>
                   </div>
                 </div>
 
                 <div className="divide-y divide-[#2D3748]">
-                  {resultado.porMaquina.map((mq) => (
+                  {resultadoVista.porMaquina.map((mq) => (
                     <div
                       key={mq.key}
                       className="px-4 py-2.5 flex items-center justify-between gap-3 text-xs sm:text-sm hover:bg-[#232A38]/50"

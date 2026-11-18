@@ -16,18 +16,32 @@ import { formatearFechaTurno } from '../../services/reports';
 import {
   consultarHistorialOp,
   ConsultaOpResultado,
+  calcularResumenModelosOp,
+  filtrarResultadoOpPorModelo,
 } from '../../services/opHistory';
 
 interface HistorialOpModalProps {
   op: string;
+  initialModeloIdx?: number;
   onClose: () => void;
 }
 
-export const HistorialOpModal: React.FC<HistorialOpModalProps> = ({ op, onClose }) => {
+export const HistorialOpModal: React.FC<HistorialOpModalProps> = ({
+  op,
+  initialModeloIdx,
+  onClose,
+}) => {
   const { catalogo, historial, maquinas, turno, metaTurno, session } = useApp();
 
   const [cargando, setCargando] = useState(true);
   const [resultado, setResultado] = useState<ConsultaOpResultado | null>(null);
+  const [modeloSeleccionadoIdx, setModeloSeleccionadoIdx] = useState<number>(
+    typeof initialModeloIdx === 'number' ? initialModeloIdx : -1
+  );
+
+  useEffect(() => {
+    setModeloSeleccionadoIdx(typeof initialModeloIdx === 'number' ? initialModeloIdx : -1);
+  }, [op, initialModeloIdx]);
 
   const catalogMatch = useMemo(() => buscarEnCatalogo(catalogo, op), [catalogo, op]);
 
@@ -50,8 +64,25 @@ export const HistorialOpModal: React.FC<HistorialOpModalProps> = ({ op, onClose 
     cargarHistorialOp();
   }, [cargarHistorialOp]);
 
-  const turnosAnteriores = resultado?.turnosAnteriores || [];
-  const totales = resultado?.totales || {
+  const modelosDisponibles = useMemo(() => catalogMatch?.modelos || [], [catalogMatch]);
+  const tieneMultiModelos = modelosDisponibles.length > 1;
+  const modeloActivo = useMemo(() => {
+    if (!tieneMultiModelos || modeloSeleccionadoIdx < 0) return null;
+    return modelosDisponibles[modeloSeleccionadoIdx] || null;
+  }, [tieneMultiModelos, modeloSeleccionadoIdx, modelosDisponibles]);
+
+  const resultadoVista = useMemo(() => {
+    if (!resultado) return null;
+    return modeloActivo ? filtrarResultadoOpPorModelo(resultado, modeloActivo) : resultado;
+  }, [resultado, modeloActivo]);
+
+  const resumenModelos = useMemo(() => {
+    if (!resultado || !tieneMultiModelos) return [];
+    return calcularResumenModelosOp(resultado, catalogMatch);
+  }, [resultado, tieneMultiModelos, catalogMatch]);
+
+  const turnosAnteriores = resultadoVista?.turnosAnteriores || [];
+  const totales = resultadoVista?.totales || {
     antPP: 0,
     mermaAntPP: 0,
     actualPP: 0,
@@ -73,11 +104,13 @@ export const HistorialOpModal: React.FC<HistorialOpModalProps> = ({ op, onClose 
   };
 
   const ppPorMaquina = useMemo(
-    () => (resultado?.porMaquina || []).filter((m) => m.tipoProducto === 'pp'),
-    [resultado]
+    () => (resultadoVista?.porMaquina || []).filter((m) => m.tipoProducto === 'pp'),
+    [resultadoVista]
   );
 
-  const cantidadOrden = Number(catalogMatch?.cantidadTotal || 0);
+  const cantidadOrden = modeloActivo
+    ? Number(modeloActivo.cantidadTotal || 0)
+    : Number(catalogMatch?.cantidadTotal || 0);
   const pctPT = cantidadOrden > 0 ? (totales.acumPT / cantidadOrden) * 100 : 0;
   const pendientePT = cantidadOrden > 0 ? cantidadOrden - totales.acumPT : 0;
 
@@ -105,7 +138,9 @@ export const HistorialOpModal: React.FC<HistorialOpModalProps> = ({ op, onClose 
             {catalogMatch && (
               <div className="text-xs text-[#CBD5E0] mt-1.5 flex items-center gap-2 flex-wrap">
                 <span className="truncate max-w-full">
-                  {catalogMatch.descripcionBase || catalogMatch.descripcion}
+                  {modeloActivo
+                    ? modeloActivo.descripcion || modeloActivo.modelo
+                    : catalogMatch.descripcionBase || catalogMatch.descripcion}
                 </span>
                 {catalogMatch.cliente && (
                   <span className="text-[#A0AEC0]">· {catalogMatch.cliente}</span>
@@ -113,9 +148,54 @@ export const HistorialOpModal: React.FC<HistorialOpModalProps> = ({ op, onClose 
                 {cantidadOrden > 0 && (
                   <span className="inline-flex items-center gap-1 text-[11px] font-['IBM_Plex_Mono',monospace] font-bold text-[#F6AD55] bg-[#3A2E1B]/60 px-2 py-0.5 rounded border border-[#F2A93B]/30">
                     <Package size={11} />
-                    Orden: {cantidadOrden.toLocaleString('es-PE')} u
+                    {modeloActivo ? 'Modelo' : 'Orden'}: {cantidadOrden.toLocaleString('es-PE')} u
                   </span>
                 )}
+              </div>
+            )}
+
+            {tieneMultiModelos && (
+              <div className="mt-2.5 flex items-center gap-1.5 flex-wrap">
+                <span className="text-[10px] uppercase tracking-wider text-[#A0AEC0] font-semibold mr-0.5">
+                  Modelo:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setModeloSeleccionadoIdx(-1)}
+                  className={`text-[10.5px] px-2 py-0.5 rounded-md border cursor-pointer transition-colors ${
+                    modeloSeleccionadoIdx === -1
+                      ? 'bg-[#F2A93B] text-[#12161F] border-[#F2A93B] font-bold'
+                      : 'bg-[#232A38] text-[#CBD5E0] border-[#4A5568] hover:text-white'
+                  }`}
+                >
+                  Todos ({modelosDisponibles.length})
+                </button>
+                {modelosDisponibles.map((mo, idx) => {
+                  const active = modeloSeleccionadoIdx === idx;
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => setModeloSeleccionadoIdx(idx)}
+                      className={`text-[10.5px] px-2 py-0.5 rounded-md border cursor-pointer transition-colors ${
+                        active
+                          ? 'bg-[#F2A93B] text-[#12161F] border-[#F2A93B] font-bold'
+                          : 'bg-[#232A38] text-[#CBD5E0] border-[#4A5568] hover:text-white'
+                      }`}
+                    >
+                      {mo.modelo || mo.descripcion || `Modelo ${idx + 1}`}
+                      {mo.cantidadTotal && Number(mo.cantidadTotal) > 0 ? (
+                        <span
+                          className={`ml-1 font-['IBM_Plex_Mono',monospace] ${
+                            active ? 'text-[#12161F]' : 'text-[#F6AD55]'
+                          }`}
+                        >
+                          ({Number(mo.cantidadTotal).toLocaleString('es-PE')})
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -131,7 +211,33 @@ export const HistorialOpModal: React.FC<HistorialOpModalProps> = ({ op, onClose 
         </div>
 
         {/* Summary KPI Strip: PT summed + PP separated by machine in small cards */}
-        <div className="px-4 py-3 bg-[#141923] border-b border-[#2D3748] space-y-2.5 shrink-0">
+        <div className="px-4 py-3 bg-[#141923] border-b border-[#2D3748] space-y-2.5 shrink-0 max-h-[38vh] overflow-y-auto">
+          {tieneMultiModelos && !modeloActivo && resumenModelos.length > 0 && !cargando && (
+            <div className="bg-[#1A202C] border border-[#2D3748] rounded-xl px-3 py-2 space-y-1.5">
+              <div className="text-[10px] uppercase tracking-wider text-[#A0AEC0] font-semibold">
+                Avance PT por Modelo (selecciona para filtrar)
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                {resumenModelos.map((rm) => (
+                  <button
+                    key={rm.idx}
+                    type="button"
+                    onClick={() => setModeloSeleccionadoIdx(rm.idx)}
+                    className="text-left bg-[#12161F] border border-[#2D3748] hover:border-[#F2A93B]/60 rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-2 cursor-pointer transition-colors"
+                  >
+                    <span className="text-[11px] font-semibold text-white truncate">
+                      {rm.modeloCorto || rm.nombre}
+                    </span>
+                    <span className="text-[10.5px] font-['IBM_Plex_Mono',monospace] text-[#63B3ED] font-bold shrink-0">
+                      {rm.ptAcumulado.toLocaleString('es-PE')}
+                      {rm.cantidadOrden > 0 ? ` / ${rm.cantidadOrden.toLocaleString('es-PE')} u` : ' u'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div
             className={`grid grid-cols-1 gap-2.5 ${
               totales.acumSinTipo > 0 ? 'sm:grid-cols-2' : ''

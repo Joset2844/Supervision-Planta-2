@@ -1134,22 +1134,51 @@ export const HistorialDBView: React.FC = () => {
                           </div>
 
                           {matchC && matchC.modelos && matchC.modelos.length > 1 && (
-                            <div className="flex gap-1.5 flex-wrap">
-                              {matchC.modelos.map((mo, i) => (
-                                <button
-                                  key={i}
-                                  type="button"
-                                  disabled={!turnoEditando.editable}
-                                  onClick={() => handleUpdateFila(fIdx, { producto: mo.descripcion, sap: mo.sap || '' })}
-                                  className={`py-1 px-2.5 rounded-lg text-xs font-semibold border min-h-[36px] ${
-                                    f.producto === mo.descripcion
-                                      ? 'bg-[#F2A93B] text-[#12161F] border-[#F2A93B]'
-                                      : 'bg-[#1A202C] text-[#CBD5E0] border-[#4A5568]'
-                                  }`}
-                                >
-                                  {mo.descripcion || `Modelo ${i + 1}`}
-                                </button>
-                              ))}
+                            <div className="space-y-1.5">
+                              <span className="block text-[10.5px] font-semibold uppercase tracking-wide text-[#A0AEC0]">
+                                {(f.tipoProducto || '').toLowerCase() === 'pt'
+                                  ? 'Modelos (PT · selecciona modelo específico):'
+                                  : 'Modelos (PP · Todos o por modelo):'}
+                              </span>
+                              <div className="flex gap-1.5 flex-wrap">
+                                {(f.tipoProducto || '').toLowerCase() !== 'pt' && (
+                                  <button
+                                    type="button"
+                                    disabled={!turnoEditando.editable}
+                                    onClick={() =>
+                                      handleUpdateFila(fIdx, {
+                                        producto: resolverModelo(matchC, -1).descripcion,
+                                        sap: '',
+                                      })
+                                    }
+                                    className={`py-1 px-2.5 rounded-lg text-xs font-semibold border min-h-[36px] ${
+                                      f.producto === resolverModelo(matchC, -1).descripcion && !f.sap
+                                        ? 'bg-[#F2A93B] text-[#12161F] border-[#F2A93B]'
+                                        : 'bg-[#1A202C] text-[#CBD5E0] border-[#4A5568]'
+                                    }`}
+                                  >
+                                    Todos (Base)
+                                  </button>
+                                )}
+                                {matchC.modelos.map((mo, i) => (
+                                  <button
+                                    key={i}
+                                    type="button"
+                                    disabled={!turnoEditando.editable}
+                                    onClick={() => handleUpdateFila(fIdx, { producto: mo.descripcion, sap: mo.sap || '' })}
+                                    className={`py-1 px-2.5 rounded-lg text-xs font-semibold border min-h-[36px] ${
+                                      f.producto === mo.descripcion || (mo.sap && f.sap === mo.sap)
+                                        ? 'bg-[#F2A93B] text-[#12161F] border-[#F2A93B]'
+                                        : 'bg-[#1A202C] text-[#CBD5E0] border-[#4A5568]'
+                                    }`}
+                                  >
+                                    {mo.modelo || mo.descripcion || `Modelo ${i + 1}`}
+                                    {mo.cantidadTotal && Number(mo.cantidadTotal) > 0
+                                      ? ` (${Number(mo.cantidadTotal).toLocaleString('es-PE')} u)`
+                                      : ''}
+                                  </button>
+                                ))}
+                              </div>
                             </div>
                           )}
 

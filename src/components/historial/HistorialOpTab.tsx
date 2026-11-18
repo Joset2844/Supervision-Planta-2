@@ -22,6 +22,7 @@ import {
   TurnoOpResumen,
   calcularResumenModelosOp,
   filtrarResultadoOpPorModelo,
+  filaCoincideConModelo,
 } from '../../services/opHistory';
 import { exportarPdfReporteOp } from '../../services/pdfOp';
 import { CatalogoItem } from '../../types';
@@ -176,6 +177,62 @@ export const HistorialOpTab: React.FC = () => {
     () => (resultadoVista?.porMaquina || []).filter((m) => m.tipoProducto === 'pp'),
     [resultadoVista]
   );
+
+  // Cuando se filtra por un modelo específico, detectar si hay PP registrado como "Todos" (global OP)
+  const ppGlobalTodosPorMaquina = useMemo(() => {
+    if (!resultado || !modeloActivo || !tieneMultiModelos) return [];
+    const todos = [
+      ...(resultado.turnoActualResumen ? [resultado.turnoActualResumen] : []),
+      ...resultado.turnosAnteriores,
+    ];
+    const map = new Map<string, { maquina: string; codigoMaquina: string; total: number }>();
+    todos.forEach((t) => {
+      t.filas.forEach((f) => {
+        if (f.tipoProducto !== 'pp') return;
+        const perteneceAModeloEspecifico = modelosDisponibles.some((m) =>
+          filaCoincideConModelo(f, m)
+        );
+        if (perteneceAModeloEspecifico) return;
+        const k = f.maquina.trim().toLowerCase();
+        if (!map.has(k)) {
+          map.set(k, {
+            maquina: f.maquina,
+            codigoMaquina: f.codigoMaquina || '',
+            total: 0,
+          });
+        }
+        map.get(k)!.total += f.total;
+      });
+    });
+    return Array.from(map.values()).filter((x) => x.total > 0);
+  }, [resultado, modeloActivo, tieneMultiModelos, modelosDisponibles]);
+
+  // Desglose por modelo en máquinas PT cuando se visualiza "Todos"
+  const ptPorModeloEnMaquina = useMemo(() => {
+    const mapa = new Map<string, Array<{ label: string; total: number }>>();
+    if (!tieneMultiModelos || modeloActivo || !resultadoVista) return mapa;
+    const acc = new Map<string, Map<string, number>>();
+    todosLosTurnos.forEach((t) => {
+      t.filas.forEach((f) => {
+        if (f.tipoProducto !== 'pt' || f.total <= 0) return;
+        const mKey = `${f.maquina.trim().toLowerCase()}||pt`;
+        if (!acc.has(mKey)) acc.set(mKey, new Map());
+        const modMatch = modelosDisponibles.find((m) => filaCoincideConModelo(f, m));
+        const modLabel = modMatch
+          ? modMatch.modelo || modMatch.descripcion
+          : f.producto || 'Sin modelo';
+        const mAcc = acc.get(mKey)!;
+        mAcc.set(modLabel, (mAcc.get(modLabel) || 0) + f.total);
+      });
+    });
+    acc.forEach((mAcc, mKey) => {
+      mapa.set(
+        mKey,
+        Array.from(mAcc.entries()).map(([label, total]) => ({ label, total }))
+      );
+    });
+    return mapa;
+  }, [tieneMultiModelos, modeloActivo, resultadoVista, todosLosTurnos, modelosDisponibles]);
 
   const handleDescargarPdfOp = () => {
     if (!opConsultada || !resultadoVista) return;
@@ -677,7 +734,9 @@ export const HistorialOpTab: React.FC = () => {
 
               {ppPorMaquina.length === 0 ? (
                 <div className="bg-[#12161F] border border-dashed border-[#2D3748] rounded-xl px-3 py-2.5 text-xs text-[#A0AEC0]">
-                  No hay producción registrada en PP para esta OP.
+                  {modeloActivo && ppGlobalTodosPorMaquina.length > 0
+                    ? 'No hay registros PP específicos de este modelo (PP fue registrado como "Todos" para la OP).'
+                    : 'No hay producción registrada en PP para esta OP.'}
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5">
@@ -720,6 +779,24 @@ export const HistorialOpTab: React.FC = () => {
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {modeloActivo && ppGlobalTodosPorMaquina.length > 0 && (
+                <div className="bg-[#12161F]/80 border border-[#F2A93B]/25 rounded-xl px-3 py-2 flex items-center justify-between gap-2 flex-wrap text-[11px]">
+                  <span className="text-[#CBD5E0]">
+                    PP registrado como <strong className="text-[#F6AD55]">&quot;Todos&quot;</strong> (OP completa):
+                  </span>
+                  <div className="flex items-center gap-1.5 flex-wrap font-['IBM_Plex_Mono',monospace]">
+                    {ppGlobalTodosPorMaquina.map((pg, idx) => (
+                      <span
+                        key={idx}
+                        className="px-2 py-0.5 rounded bg-[#232A38] border border-[#4A5568] text-[#F6AD55]"
+                      >
+                        {pg.maquina}: {pg.total.toLocaleString('es-PE')} u
+                      </span>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -792,6 +869,19 @@ export const HistorialOpTab: React.FC = () => {
                             )}
                           </div>
                         )}
+                        {mq.tipoProducto === 'pt' &&
+                          (ptPorModeloEnMaquina.get(mq.key) || []).length > 0 && (
+                            <div className="mt-1 pl-5 flex items-center gap-1.5 flex-wrap">
+                              {(ptPorModeloEnMaquina.get(mq.key) || []).map((pm, idxPm) => (
+                                <span
+                                  key={idxPm}
+                                  className="text-[10px] px-1.5 py-0.5 rounded bg-[#12161F] border border-[#63B3ED]/30 text-[#93C5FD] font-['IBM_Plex_Mono',monospace]"
+                                >
+                                  {pm.label}: {pm.total.toLocaleString('es-PE')} u
+                                </span>
+                              ))}
+                            </div>
+                          )}
                       </div>
 
                       <div className="text-right shrink-0 font-['IBM_Plex_Mono',monospace]">
@@ -909,6 +999,11 @@ export const HistorialOpTab: React.FC = () => {
                                     }`}
                                   >
                                     {f.tipoProducto.toUpperCase()}
+                                  </span>
+                                )}
+                                {f.sap && (
+                                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#12161F] border border-[#2D3748] text-[#A0AEC0] font-['IBM_Plex_Mono',monospace]">
+                                    SAP: {f.sap}
                                   </span>
                                 )}
                               </div>

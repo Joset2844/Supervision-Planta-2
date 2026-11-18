@@ -18,6 +18,7 @@ import {
   ConsultaOpResultado,
   calcularResumenModelosOp,
   filtrarResultadoOpPorModelo,
+  filaCoincideConModelo,
 } from '../../services/opHistory';
 
 interface HistorialOpModalProps {
@@ -107,6 +108,28 @@ export const HistorialOpModal: React.FC<HistorialOpModalProps> = ({
     () => (resultadoVista?.porMaquina || []).filter((m) => m.tipoProducto === 'pp'),
     [resultadoVista]
   );
+
+  const ppGlobalTodosPorMaquina = useMemo(() => {
+    if (!resultado || !modeloActivo || !tieneMultiModelos) return [];
+    const todos = [
+      ...(resultado.turnoActualResumen ? [resultado.turnoActualResumen] : []),
+      ...resultado.turnosAnteriores,
+    ];
+    const map = new Map<string, { maquina: string; total: number }>();
+    todos.forEach((t) => {
+      t.filas.forEach((f) => {
+        if (f.tipoProducto !== 'pp') return;
+        const perteneceAModeloEspecifico = modelosDisponibles.some((m) =>
+          filaCoincideConModelo(f, m)
+        );
+        if (perteneceAModeloEspecifico) return;
+        const k = f.maquina.trim().toLowerCase();
+        if (!map.has(k)) map.set(k, { maquina: f.maquina, total: 0 });
+        map.get(k)!.total += f.total;
+      });
+    });
+    return Array.from(map.values()).filter((x) => x.total > 0);
+  }, [resultado, modeloActivo, tieneMultiModelos, modelosDisponibles]);
 
   const cantidadOrden = modeloActivo
     ? Number(modeloActivo.cantidadTotal || 0)
@@ -350,7 +373,9 @@ export const HistorialOpModal: React.FC<HistorialOpModalProps> = ({
 
             {ppPorMaquina.length === 0 ? (
               <div className="text-[11px] text-[#718096]">
-                No hay producción registrada en PP para esta OP.
+                {modeloActivo && ppGlobalTodosPorMaquina.length > 0
+                  ? 'No hay registros PP específicos de este modelo (PP fue registrado como "Todos" para la OP).'
+                  : 'No hay producción registrada en PP para esta OP.'}
               </div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -387,6 +412,24 @@ export const HistorialOpModal: React.FC<HistorialOpModalProps> = ({
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {modeloActivo && ppGlobalTodosPorMaquina.length > 0 && (
+              <div className="bg-[#12161F]/80 border border-[#F2A93B]/25 rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-1.5 flex-wrap text-[10.5px]">
+                <span className="text-[#CBD5E0]">
+                  PP registrado como <strong className="text-[#F6AD55]">&quot;Todos&quot;</strong>:
+                </span>
+                <div className="flex items-center gap-1 flex-wrap font-['IBM_Plex_Mono',monospace]">
+                  {ppGlobalTodosPorMaquina.map((pg, idx) => (
+                    <span
+                      key={idx}
+                      className="px-1.5 py-0.2 rounded bg-[#232A38] border border-[#4A5568] text-[#F6AD55]"
+                    >
+                      {pg.maquina}: {pg.total.toLocaleString('es-PE')} u
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -497,6 +540,11 @@ export const HistorialOpModal: React.FC<HistorialOpModalProps> = ({
                                 }`}
                               >
                                 {f.tipoProducto.toUpperCase()}
+                              </span>
+                            )}
+                            {f.sap && (
+                              <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-[#12161F] border border-[#2D3748] text-[#A0AEC0] font-['IBM_Plex_Mono',monospace]">
+                                SAP: {f.sap}
                               </span>
                             )}
                           </div>

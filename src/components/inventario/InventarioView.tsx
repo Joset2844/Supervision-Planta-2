@@ -101,13 +101,8 @@ export const InventarioView: React.FC = () => {
   const handleSelectOp = (item: CatalogoItem) => {
     setOpInput(item.op);
     setModeloSeleccionado(-1);
-    const tieneMulti = Boolean(item.modelos && item.modelos.length > 1);
-    if (tieneMulti) {
-      setDescInput('');
-    } else {
-      const mod = resolverModelo(item, -1);
-      setDescInput(mod.descripcion);
-    }
+    const mod = resolverModelo(item, -1);
+    setDescInput(mod.descripcion);
     setClienteInput(item.cliente);
     setShowSuggestions(false);
     setTimeout(() => {
@@ -129,13 +124,8 @@ export const InventarioView: React.FC = () => {
     const m = buscarEnCatalogo(catalogo, digitsOnly);
     if (m) {
       setModeloSeleccionado(-1);
-      const tieneMulti = Boolean(m.modelos && m.modelos.length > 1);
-      if (tieneMulti) {
-        setDescInput('');
-      } else {
-        const mod = resolverModelo(m, -1);
-        setDescInput(mod.descripcion);
-      }
+      const mod = resolverModelo(m, -1);
+      setDescInput(mod.descripcion);
       setClienteInput(m.cliente);
     } else {
       setModeloSeleccionado(-1);
@@ -183,10 +173,6 @@ export const InventarioView: React.FC = () => {
   const handleAgregarPieza = () => {
     if (!opInput.trim()) {
       showToast('error', 'Ingresa el número de OP');
-      return;
-    }
-    if (matchActual && matchActual.modelos && matchActual.modelos.length > 1 && modeloSeleccionado < 0) {
-      showToast('error', 'Selecciona el modelo específico de la OP antes de agregar');
       return;
     }
     if (!unidadesInput || !cajasInput) {
@@ -659,12 +645,12 @@ export const InventarioView: React.FC = () => {
                 modeloSeleccionado >= 0 && matchActual.modelos && matchActual.modelos[modeloSeleccionado]
                   ? matchActual.modelos[modeloSeleccionado]
                   : null;
-              const esMulti = Boolean(matchActual.modelos && matchActual.modelos.length > 1);
-              const cantMostrar = modSel && modSel.cantidadTotal
-                ? Number(modSel.cantidadTotal)
-                : !esMulti && matchActual.cantidadTotal
-                ? Number(matchActual.cantidadTotal)
-                : 0;
+              const cantMostrar =
+                modSel && modSel.cantidadTotal
+                  ? Number(modSel.cantidadTotal)
+                  : matchActual.cantidadTotal
+                  ? Number(matchActual.cantidadTotal)
+                  : 0;
               if (!cantMostrar || cantMostrar <= 0) return null;
               return (
                 <div className="mb-2 px-2.5 py-1.5 bg-[#232A38] rounded-lg border border-[#F2A93B]/30 flex items-center justify-between text-xs font-['IBM_Plex_Mono',monospace]">
@@ -678,15 +664,22 @@ export const InventarioView: React.FC = () => {
 
             {/* Model chips if multi-model */}
             {matchActual && matchActual.modelos && matchActual.modelos.length > 1 && (
-              <div
-                className={`mb-2 p-2 bg-[#232A38] rounded-lg border ${
-                  modeloSeleccionado < 0 ? 'border-[#F2A93B]/70' : 'border-[#2D3748]'
-                }`}
-              >
-                <label className="block text-[10px] font-semibold text-[#F6AD55] mb-1.5 uppercase tracking-wide">
-                  Selecciona el modelo ({matchActual.modelos.length} modelos · por separado)
+              <div className="mb-2 p-2 bg-[#232A38] rounded-lg border border-[#2D3748]">
+                <label className="block text-[10px] font-semibold text-[#F2A93B] mb-1.5 uppercase tracking-wide">
+                  Modelos ({matchActual.modelos.length} — elige uno o Todos)
                 </label>
                 <div className="flex gap-1 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => handleModeloChipClick(-1)}
+                    className={`py-1 px-2 rounded-md text-[11px] font-semibold cursor-pointer border transition-all ${
+                      modeloSeleccionado === -1
+                        ? 'bg-[#F2A93B] text-[#12161F] border-[#F2A93B] shadow-sm'
+                        : 'bg-[#1A202C] text-[#CBD5E0] border-[#4A5568] hover:text-white'
+                    }`}
+                  >
+                    Todos (Base)
+                  </button>
                   {matchActual.modelos.map((m, idx) => (
                     <button
                       key={idx}

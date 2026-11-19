@@ -44,6 +44,21 @@ function opDigits(op: any): string {
   return String(op || '').replace(/\D/g, '');
 }
 
+function normalizarClaveOp(op: any): string {
+  let s = String(op || '').trim().toUpperCase();
+  if (!s) return '';
+  s = s.replace(/^(?:O\.?\s*P\.?|ODT|N[°º.]?|#)\s*[-:#.]?\s*/i, '').trim();
+  if (/^\d+$/.test(s)) {
+    s = s.replace(/^0+/, '') || '0';
+  }
+  return s;
+}
+
+function opSoloPrefijoYDigitos(op: any): boolean {
+  const s = String(op || '').trim().replace(/^(?:O\.?\s*P\.?|ODT|N[°º.]?|#)\s*[-:#.]?\s*/i, '').trim();
+  return /^\d+$/.test(s);
+}
+
 function opDigitsSinCeros(op: any): string {
   const d = opDigits(op).replace(/^0+/, '');
   return d || opDigits(op);
@@ -113,18 +128,27 @@ export function buscarEnCatalogo(catalogo: CatalogoItem[], op: string): Catalogo
     );
   }
 
-  const digits = opDigits(q);
-  if (digits) {
-    const digitsNoZero = opDigitsSinCeros(q);
-    const byDigits = catalogo.filter((c) => {
-      const cd = opDigits(c.op);
-      if (!cd) return false;
-      return cd === digits || opDigitsSinCeros(c.op) === digitsNoZero;
-    });
-    if (byDigits.length > 0) {
-      return byDigits.reduce((best, cur) =>
+  const qNorm = normalizarClaveOp(q);
+  if (qNorm) {
+    const byNorm = catalogo.filter((c) => normalizarClaveOp(c.op) === qNorm);
+    if (byNorm.length > 0) {
+      return byNorm.reduce((best, cur) =>
         (cur.modelos?.length || 0) > (best.modelos?.length || 0) ? cur : best
       );
+    }
+  }
+
+  if (opSoloPrefijoYDigitos(q)) {
+    const digitsNoZero = opDigitsSinCeros(q);
+    if (digitsNoZero) {
+      const byDigits = catalogo.filter(
+        (c) => opSoloPrefijoYDigitos(c.op) && opDigitsSinCeros(c.op) === digitsNoZero
+      );
+      if (byDigits.length > 0) {
+        return byDigits.reduce((best, cur) =>
+          (cur.modelos?.length || 0) > (best.modelos?.length || 0) ? cur : best
+        );
+      }
     }
   }
   return null;
@@ -174,6 +198,15 @@ export function parsearCantidad(raw: any): number {
 export function esColumnaCantidad(h: string): boolean {
   if (!h) return false;
   const s = h.toLowerCase().trim();
+  if (
+    s.includes('modelo') ||
+    s.includes('caja') ||
+    s.includes('paquete') ||
+    s.includes('min') ||
+    s.includes('merma')
+  ) {
+    return false;
+  }
   return (
     s.includes('cantidad') ||
     s === 'cant' ||
@@ -190,8 +223,59 @@ export function esColumnaCantidad(h: string): boolean {
     s === 'meta' ||
     s === 'objetivo' ||
     s === 'ctd' ||
-    s === 'ctdad'
+    s === 'ctdad' ||
+    s === 'odtcant'
   );
+}
+
+function encontrarColumnaOp(headers: string[]): number {
+  const exactos = ['op', 'ops', "op's", 'odtcod', 'odt', 'nro op', 'n op', 'num op', 'numero op', 'codigo op', 'cod op'];
+  let idx = headers.findIndex((h) => exactos.includes(h));
+  if (idx !== -1) return idx;
+  idx = headers.findIndex((h) => /\b(op|odt)\b/.test(h) && !h.includes('operad') && !h.includes('operar') && !h.includes('opcion') && !h.includes('copia'));
+  if (idx !== -1) return idx;
+  return headers.findIndex(
+    (h) =>
+      h.includes('op') &&
+      !h.includes('operad') &&
+      !h.includes('operar') &&
+      !h.includes('opcion') &&
+      !h.includes('copia') &&
+      !h.includes('soporte') &&
+      !h.includes('propied')
+  );
+}
+
+function encontrarColumnaSap(headers: string[]): number {
+  let idx = headers.findIndex((h) => h === 'sap' || h === 'codptsap' || h.includes('sap'));
+  if (idx !== -1) return idx;
+  idx = headers.findIndex(
+    (h) =>
+      (h === 'codigo' || h.includes('codigo producto') || h.includes('cod producto') || h.includes('codigo pt') || h.includes('cod pt')) &&
+      !h.includes('op') &&
+      !h.includes('cliente') &&
+      !h.includes('maq')
+  );
+  if (idx !== -1) return idx;
+  return headers.findIndex((h) => h.includes('codigo') && !h.includes('op') && !h.includes('cliente') && !h.includes('maq'));
+}
+
+function encontrarColumnaCantidad(headers: string[]): number {
+  const exactos = ['cantidad', 'cantidad total', 'cant total', 'cant', 'cant.', 'total', 'unidades', 'odtcant'];
+  const idx = headers.findIndex((h) => exactos.includes(h));
+  if (idx !== -1) return idx;
+  return headers.findIndex(esColumnaCantidad);
+}
+
+function encontrarFilaEncabezados(rows: any[][], validar: (headers: string[]) => boolean): { rowIdx: number; headers: string[] } | null {
+  const maxScan = Math.min(rows.length - 1, 8);
+  for (let i = 0; i < maxScan; i++) {
+    const headers = (rows[i] || []).map(normalizar);
+    if (validar(headers)) {
+      return { rowIdx: i, headers };
+    }
+  }
+  return null;
 }
 
 function buscarClaveBase(mapa: Record<string, any>, op: string): string | null {
@@ -199,10 +283,21 @@ function buscarClaveBase(mapa: Record<string, any>, op: string): string | null {
   const qLower = op.trim().toLowerCase();
   const exactKey = Object.keys(mapa).find((x) => x.trim().toLowerCase() === qLower);
   if (exactKey) return exactKey;
-  const qDigits = opDigitsSinCeros(op);
-  if (qDigits) {
-    const digitKey = Object.keys(mapa).find((x) => opDigitsSinCeros(x) === qDigits);
-    if (digitKey) return digitKey;
+
+  const qNorm = normalizarClaveOp(op);
+  if (qNorm) {
+    const normKey = Object.keys(mapa).find((x) => normalizarClaveOp(x) === qNorm);
+    if (normKey) return normKey;
+  }
+
+  if (opSoloPrefijoYDigitos(op)) {
+    const qDigits = opDigitsSinCeros(op);
+    if (qDigits) {
+      const digitKey = Object.keys(mapa).find(
+        (x) => opSoloPrefijoYDigitos(x) && opDigitsSinCeros(x) === qDigits
+      );
+      if (digitKey) return digitKey;
+    }
   }
   return null;
 }
@@ -215,32 +310,46 @@ function buscarBase(mapa: Record<string, any>, op: string) {
 function parsearHojaCatalogo(sheet: any) {
   const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
   if (rows.length < 2) return null;
-  const headers = rows[0].map(normalizar);
-  const idxOp = headers.findIndex((h) => h === 'op' || h.indexOf('op') !== -1);
-  const idxDesc = headers.findIndex((h) => h.indexOf('descripcion') !== -1 || h.indexOf('producto') !== -1 || h.indexOf('articulo') !== -1);
-  const idxModelo = headers.findIndex((h) => h === 'modelo' || h.indexOf('modelo') !== -1);
-  const idxCliente = headers.findIndex((h) => h.indexOf('cliente') !== -1 || h.indexOf('razon') !== -1);
-  const idxCantidad = headers.findIndex(esColumnaCantidad);
-  const idxSap = headers.findIndex((h) => h.indexOf('sap') !== -1 || h.indexOf('codigo') !== -1);
-  if (idxOp === -1 || idxDesc === -1 || idxCliente === -1) return null;
 
-  const filasValidas = rows.slice(1).filter((r) => String(r[idxOp]).trim() !== '');
+  const found = encontrarFilaEncabezados(rows, (headers) => {
+    const idxOp = encontrarColumnaOp(headers);
+    const idxDesc = headers.findIndex((h) => h.includes('descripcion') || h.includes('producto') || h.includes('articulo'));
+    const idxCliente = headers.findIndex((h) => h.includes('cliente') || h.includes('razon') || h.includes('empresa'));
+    return idxOp !== -1 && idxDesc !== -1 && idxCliente !== -1;
+  });
+  if (!found) return null;
+
+  const { rowIdx, headers } = found;
+  const idxOp = encontrarColumnaOp(headers);
+  const idxDesc =
+    headers.findIndex((h) => h === 'descripcion' || h === 'producto') !== -1
+      ? headers.findIndex((h) => h === 'descripcion' || h === 'producto')
+      : headers.findIndex((h) => h.includes('descripcion') || h.includes('producto') || h.includes('articulo'));
+  const idxModelo =
+    headers.findIndex((h) => h === 'modelo') !== -1
+      ? headers.findIndex((h) => h === 'modelo')
+      : headers.findIndex((h) => h.includes('modelo'));
+  const idxCliente = headers.findIndex((h) => h.includes('cliente') || h.includes('razon') || h.includes('empresa'));
+  const idxCantidad = encontrarColumnaCantidad(headers);
+  const idxSap = encontrarColumnaSap(headers);
+
+  const filasValidas = rows.slice(rowIdx + 1).filter((r) => String(r[idxOp] ?? '').trim() !== '');
   const mapaOps: Record<string, any> = {};
   const ordenOps: string[] = [];
 
   filasValidas.forEach((r) => {
-    const opRaw = String(r[idxOp]).trim();
+    const opRaw = String(r[idxOp] ?? '').trim();
     const claveExistente = buscarClaveBase(mapaOps, opRaw);
     const opKey = claveExistente || opRaw;
-    const cliente = String(r[idxCliente]).trim();
+    const cliente = String(r[idxCliente] ?? '').trim();
     const cantNum = idxCantidad !== -1 ? parsearCantidad(r[idxCantidad]) : 0;
-    const descBase = String(r[idxDesc]).trim();
-    const modeloTxt = idxModelo !== -1 ? String(r[idxModelo]).trim() : '';
+    const descBase = String(r[idxDesc] ?? '').trim();
+    const modeloTxt = idxModelo !== -1 ? String(r[idxModelo] ?? '').trim() : '';
     const desc =
       modeloTxt && !descBase.toLowerCase().includes(modeloTxt.toLowerCase())
         ? `${descBase} - ${modeloTxt}`
         : descBase || modeloTxt;
-    const sap = idxSap !== -1 ? String(r[idxSap]).trim() : '';
+    const sap = idxSap !== -1 ? String(r[idxSap] ?? '').trim() : '';
     const modelo: CatalogoModelo = {
       ...(modeloTxt ? { modelo: modeloTxt } : {}),
       descripcion: desc,
@@ -250,6 +359,8 @@ function parsearHojaCatalogo(sheet: any) {
     if (!mapaOps[opKey]) {
       mapaOps[opKey] = { op: opKey, cliente, cantidadTotal: 0, descripcionBase: descBase, modelos: [] };
       ordenOps.push(opKey);
+    } else if (!mapaOps[opKey].cliente && cliente) {
+      mapaOps[opKey].cliente = cliente;
     }
     const idxExistente = mapaOps[opKey].modelos.findIndex((mo: any) => {
       const sameDesc = mo.descripcion === modelo.descripcion;
@@ -271,43 +382,73 @@ function parsearHojaCatalogo(sheet: any) {
 function parsearHojaModelos(sheet: any, mapaBase: Record<string, any>) {
   const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
   if (rows.length < 2) return null;
-  const headers = rows[0].map(normalizar);
-  const idxOp = headers.findIndex((h) => h === 'op' || h.indexOf('op') !== -1);
-  let idxModelo = headers.findIndex((h) => h === 'modelo' || h.indexOf('modelo') !== -1);
+
+  const found = encontrarFilaEncabezados(rows, (headers) => {
+    const idxOp = encontrarColumnaOp(headers);
+    const hasModelo = headers.some(
+      (h) => h === 'modelo' || h.includes('modelo') || h.includes('descripcion') || h.includes('producto') || h.includes('variante') || h.includes('sabor')
+    );
+    return idxOp !== -1 && hasModelo;
+  });
+  if (!found) return null;
+
+  const { rowIdx, headers } = found;
+  const idxOp = encontrarColumnaOp(headers);
+  let idxModelo = headers.findIndex((h) => h === 'modelo' || h.includes('modelo'));
+  const idxDescAlt = headers.findIndex((h) => h.includes('descripcion') || h.includes('producto') || h.includes('variante') || h.includes('sabor'));
   if (idxModelo === -1) {
-    idxModelo = headers.findIndex((h) => h.indexOf('descripcion') !== -1 || h.indexOf('producto') !== -1 || h.indexOf('variante') !== -1);
+    idxModelo = idxDescAlt;
   }
-  const idxCantidad = headers.findIndex(esColumnaCantidad);
-  const idxSap = headers.findIndex((h) => h.indexOf('sap') !== -1 || h.indexOf('codigo') !== -1);
+  const idxCliente = headers.findIndex((h) => h.includes('cliente') || h.includes('razon') || h.includes('empresa'));
+  const idxCantidad = encontrarColumnaCantidad(headers);
+  const idxSap = encontrarColumnaSap(headers);
   if (idxOp === -1 || idxModelo === -1) return null;
 
-  const filasValidas = rows.slice(1).filter((r) => String(r[idxOp]).trim() !== '');
+  const filasValidas = rows.slice(rowIdx + 1).filter((r) => String(r[idxOp] ?? '').trim() !== '');
   const mapaOps: Record<string, any> = {};
   const ordenOps: string[] = [];
 
   filasValidas.forEach((r) => {
-    const opRaw = String(r[idxOp]).trim();
+    const opRaw = String(r[idxOp] ?? '').trim();
     const base = buscarBase(mapaBase, opRaw);
     const opKey = base ? base.op : buscarClaveBase(mapaOps, opRaw) || opRaw;
-    const modeloTxt = String(r[idxModelo]).trim();
+    let modeloTxt = String(r[idxModelo] ?? '').trim();
+    if (!modeloTxt && idxDescAlt !== -1) {
+      modeloTxt = String(r[idxDescAlt] ?? '').trim();
+    }
+    if (!modeloTxt) return;
+
     const cantNum = idxCantidad !== -1 ? parsearCantidad(r[idxCantidad]) : 0;
-    const descBase = base ? (base.modelos && base.modelos[0] ? base.modelos[0].descripcion : (base.descripcion || '')) : '';
+    const descBase = base
+      ? base.descripcionBase || (base.modelos && base.modelos[0] ? base.modelos[0].descripcion : base.descripcion || '')
+      : '';
     const descripcionFinal =
       descBase && !modeloTxt.toLowerCase().includes(descBase.toLowerCase())
         ? `${descBase} - ${modeloTxt}`
         : modeloTxt;
+    const sap = idxSap !== -1 ? String(r[idxSap] ?? '').trim() : '';
+    const clienteMod = idxCliente !== -1 ? String(r[idxCliente] ?? '').trim() : '';
     const modelo: CatalogoModelo = {
       modelo: modeloTxt,
       descripcion: descripcionFinal,
-      sap: idxSap !== -1 ? String(r[idxSap]).trim() : '',
+      sap,
       cantidadTotal: cantNum,
     };
     if (!mapaOps[opKey]) {
-      mapaOps[opKey] = { op: opKey, cliente: base ? base.cliente : '', cantidadTotal: 0, modelos: [] };
+      mapaOps[opKey] = {
+        op: opKey,
+        cliente: base ? base.cliente : clienteMod,
+        cantidadTotal: 0,
+        modelos: [],
+      };
       ordenOps.push(opKey);
+    } else if (!mapaOps[opKey].cliente && clienteMod) {
+      mapaOps[opKey].cliente = clienteMod;
     }
     const idxM = mapaOps[opKey].modelos.findIndex(
-      (mo: any) => (mo.modelo === modeloTxt || mo.descripcion === descripcionFinal) && (mo.sap || '') === (modelo.sap || '')
+      (mo: any) =>
+        (mo.modelo === modeloTxt || mo.descripcion === descripcionFinal) &&
+        (mo.sap || '') === (modelo.sap || '')
     );
     if (idxM === -1) {
       mapaOps[opKey].modelos.push(modelo);
@@ -340,15 +481,18 @@ export function construirCatalogo(sheetPrincipal: any, sheetModelos: any): Catal
           ordenFinal.push(targetOp);
           mapaFinal[targetOp] = { ...modelosData, op: targetOp };
         } else {
-          const descBase = base && base.modelos[0] ? (base.descripcionBase || base.modelos[0].descripcion) : (base?.descripcion || '');
+          const descBase =
+            base && base.modelos[0]
+              ? base.descripcionBase || base.modelos[0].descripcion
+              : base?.descripcion || '';
           const cantModelos = modelosData.cantidadTotal || 0;
-          const cantBase = base ? (base.cantidadTotal || 0) : 0;
+          const cantBase = base ? base.cantidadTotal || 0 : 0;
           const cantFinal = cantModelos > 0 ? cantModelos : cantBase;
 
           mapaFinal[targetOp] = {
             ...modelosData,
             op: targetOp,
-            cliente: base ? base.cliente : modelosData.cliente,
+            cliente: (base && base.cliente) || modelosData.cliente || '',
             cantidadTotal: cantFinal,
             descripcionBase: descBase,
           };
@@ -390,14 +534,24 @@ export function construirCatalogo(sheetPrincipal: any, sheetModelos: any): Catal
 }
 
 export function procesarWorkbookCatalogo(wb: XLSX.WorkBook): CatalogoItem[] | null {
-  const sheetPrincipal = wb.Sheets[wb.SheetNames[0]];
+  if (!wb || !wb.SheetNames || wb.SheetNames.length === 0) return null;
+
+  let principalName = wb.SheetNames[0];
+  if (!parsearHojaCatalogo(wb.Sheets[principalName])) {
+    const otraPrincipal = wb.SheetNames.find((n) => parsearHojaCatalogo(wb.Sheets[n]) !== null);
+    if (otraPrincipal) principalName = otraPrincipal;
+  }
+
+  const sheetPrincipal = wb.Sheets[principalName];
   let sheetModelos: any = null;
-  if (wb.SheetNames.length > 1) {
-    const nombreModelo = wb.SheetNames.slice(1).find((n) => {
+  const otrasHojas = wb.SheetNames.filter((n) => n !== principalName);
+  if (otrasHojas.length > 0) {
+    const nombreModelo = otrasHojas.find((n) => {
       const norm = normalizar(n);
-      return norm.includes('modelo') || norm.includes('detalle') || norm.includes('variante');
+      return norm.includes('modelo') || norm.includes('detalle') || norm.includes('variante') || norm.includes('sabor');
     });
-    sheetModelos = wb.Sheets[nombreModelo || wb.SheetNames[1]];
+    const candidata = nombreModelo || otrasHojas.find((n) => parsearHojaModelos(wb.Sheets[n], {}) !== null);
+    if (candidata) sheetModelos = wb.Sheets[candidata];
   }
   return construirCatalogo(sheetPrincipal, sheetModelos);
 }
@@ -1206,20 +1360,22 @@ export function imprimirInventarioFormatoExcel(lista: ListaItem[], catalogo: Cat
 export function turnosDeMaquina(m: Maquina, turno: TurnoMaquina[]): TurnoMaquina[] {
   if (!m.multiOp) {
     const t = turno.find((x) => x.maquinaId === m.id && (x.instancia || 1) === 1);
-    return [
-      t || {
-        maquinaId: m.id,
-        instancia: 1,
-        op: '',
-        objetivo: null,
-        motivoParada: '',
-        observaciones: '',
-        personal: '',
-        modeloIdx: -1,
-        pliego: '',
-        registros: [],
-      },
-    ];
+    const extrasConRegistros = turno
+      .filter((x) => x.maquinaId === m.id && (x.instancia || 1) !== 1 && (x.registros || []).length > 0)
+      .sort((a, b) => (a.instancia || 1) - (b.instancia || 1));
+    const principal: TurnoMaquina = t || {
+      maquinaId: m.id,
+      instancia: 1,
+      op: '',
+      objetivo: null,
+      motivoParada: '',
+      observaciones: '',
+      personal: '',
+      modeloIdx: -1,
+      pliego: '',
+      registros: [],
+    };
+    return [principal, ...extrasConRegistros];
   }
   let lista = turno.filter((x) => x.maquinaId === m.id);
   if (!lista.length) {
@@ -1265,9 +1421,20 @@ export function opsDeTurno(t: TurnoMaquina): { op: string; modeloIdx: number; pl
 // ----------------- TURNO EXCEL & FORMATTING -----------------
 export function generarFilasTurno(maquinas: Maquina[], turno: TurnoMaquina[], catalogo: CatalogoItem[]): FilaTurnoExcel[] {
   const filas: FilaTurnoExcel[] = [];
-  const activas = maquinas.filter((m) => m.activa).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
+  const activas = maquinas
+    .filter(
+      (m) =>
+        m.activa ||
+        turno.some(
+          (t) =>
+            t.maquinaId === m.id &&
+            (t.registros || []).some((r) => (r.cantidad || 0) > 0 || (r.merma || 0) > 0)
+        )
+    )
+    .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
 
   activas.forEach((m) => {
+    const tipoMaqNorm = (m.tipoProducto || '').trim().toLowerCase();
     turnosDeMaquina(m, turno).forEach((t) => {
       function textoObservaciones(tn: TurnoMaquina) {
         const partes: string[] = [];
@@ -1293,7 +1460,7 @@ export function generarFilasTurno(maquinas: Maquina[], turno: TurnoMaquina[], ca
           filas.push({
             maquina: m.nombre,
             codigoMaquina: m.codigo || '',
-            tipoProducto: m.tipoProducto || '',
+            tipoProducto: tipoMaqNorm,
             area: m.area || '',
             op: o.op || '',
             sap: match ? modeloVacio.sap || '' : '',
@@ -1316,10 +1483,25 @@ export function generarFilasTurno(maquinas: Maquina[], turno: TurnoMaquina[], ca
           if (!grupos[claveGrupo]) {
             const match = buscarEnCatalogo(catalogo, opKey);
             const descBase = descKey || (match ? resolverModelo(match, -1).descripcion : '');
+            let sapGrupo = r.sap || '';
+            if (!sapGrupo && match) {
+              if (match.modelos && match.modelos.length > 1 && descKey) {
+                const moMatch = match.modelos.find(
+                  (mo) =>
+                    mo.descripcion === descKey ||
+                    (mo.modelo && descKey.toLowerCase().includes(mo.modelo.toLowerCase()))
+                );
+                sapGrupo = moMatch?.sap || match.sap || '';
+              } else if (match.modelos && match.modelos.length === 1) {
+                sapGrupo = match.modelos[0].sap || match.sap || '';
+              } else {
+                sapGrupo = match.sap || '';
+              }
+            }
             grupos[claveGrupo] = {
               op: opKey,
               descripcion: descBase + (pliegoKey ? ' - ' + etiquetaPliego(pliegoKey) : ''),
-              sap: r.sap || (match ? match.sap || '' : ''),
+              sap: sapGrupo,
               total: 0,
               merma: 0,
               etq: etiquetaPliego(pliegoKey),
@@ -1341,7 +1523,7 @@ export function generarFilasTurno(maquinas: Maquina[], turno: TurnoMaquina[], ca
           filas.push({
             maquina: m.nombre,
             codigoMaquina: m.codigo || '',
-            tipoProducto: m.tipoProducto || '',
+            tipoProducto: tipoMaqNorm,
             area: m.area || '',
             op: g.op,
             sap: g.sap || '',
@@ -1359,7 +1541,7 @@ export function generarFilasTurno(maquinas: Maquina[], turno: TurnoMaquina[], ca
           filas.push({
             maquina: m.nombre,
             codigoMaquina: m.codigo || '',
-            tipoProducto: m.tipoProducto || '',
+            tipoProducto: tipoMaqNorm,
             area: m.area || '',
             op: o.op,
             sap: matchActual ? modeloActual.sap || '' : '',
@@ -2222,14 +2404,89 @@ export function imprimirActivacion(filas: any[], fechaTxt: string, turnoTxt: str
 }
 
 // ----------------- MIGRACION EXCEL -----------------
-export function exportarMigracion(todasLasFilas: FilaTurnoExcel[], fecha: string, tipo: string) {
-  const filas = todasLasFilas.filter((f) => f.tipoProducto === 'pt' && f.total > 0);
-  if (filas.length === 0) {
+export function exportarMigracion(
+  todasLasFilas: FilaTurnoExcel[],
+  fecha: string,
+  tipo: string,
+  maquinas?: Maquina[],
+  catalogo?: CatalogoItem[]
+) {
+  const maqByName = new Map<string, Maquina>();
+  const maqByNorm = new Map<string, Maquina>();
+  const maqByCode = new Map<string, Maquina>();
+
+  const normKey = (s: string) =>
+    String(s || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '');
+
+  (maquinas || []).forEach((m) => {
+    const nameL = (m.nombre || '').trim().toLowerCase();
+    if (nameL) {
+      maqByName.set(nameL, m);
+      maqByNorm.set(normKey(nameL), m);
+    }
+    const codL = (m.codigo || '').trim().toLowerCase();
+    if (codL) {
+      maqByCode.set(codL, m);
+    }
+  });
+
+  const buscarMaquinaFila = (f: FilaTurnoExcel): Maquina | undefined => {
+    const nL = (f.maquina || '').trim().toLowerCase();
+    const cL = (f.codigoMaquina || '').trim().toLowerCase();
+    return (
+      (nL ? maqByName.get(nL) : undefined) ||
+      (cL ? maqByCode.get(cL) : undefined) ||
+      (nL ? maqByNorm.get(normKey(nL)) : undefined)
+    );
+  };
+
+  const filasEnriquecidas = (todasLasFilas || [])
+    .map((f) => {
+      const maq = buscarMaquinaFila(f);
+      const tipoRaw = (f.tipoProducto || '').trim().toLowerCase();
+      const tipoMaq = (maq?.tipoProducto || '').trim().toLowerCase();
+      const tipoResuelto = tipoRaw === 'pt' || tipoRaw === 'pp' ? tipoRaw : tipoMaq;
+      const totalNum = typeof f.total === 'number' ? f.total : parsearCantidad(f.total);
+
+      let sapResuelto = (f.sap || '').trim();
+      if (!sapResuelto && catalogo && catalogo.length > 0 && f.op) {
+        const match = buscarEnCatalogo(catalogo, f.op);
+        if (match) {
+          if (match.modelos && match.modelos.length > 1 && f.producto) {
+            const prodL = f.producto.toLowerCase();
+            const moMatch = match.modelos.find(
+              (mo) =>
+                mo.descripcion.toLowerCase() === prodL ||
+                (mo.modelo && prodL.includes(mo.modelo.toLowerCase()))
+            );
+            sapResuelto = moMatch?.sap || match.sap || '';
+          } else if (match.modelos && match.modelos.length === 1) {
+            sapResuelto = match.modelos[0].sap || match.sap || '';
+          } else {
+            sapResuelto = match.sap || '';
+          }
+        }
+      }
+
+      return {
+        ...f,
+        tipoResuelto,
+        totalNum,
+        codigoResuelto: (f.codigoMaquina || '').trim() || maq?.codigo || '',
+        sapResuelto,
+      };
+    })
+    .filter((f) => f.tipoResuelto === 'pt' && f.totalNum > 0);
+
+  if (filasEnriquecidas.length === 0) {
     throw new Error('No hay producción PT para migrar');
   }
   const aoa = [['ODTCOD', 'CODPTSAP', 'CODMAQ', 'ODTCANT', 'ODTOBS']];
-  filas.forEach((f) => {
-    aoa.push([f.op || '', f.sap || '', f.codigoMaquina || '', String(f.total), f.observaciones || '']);
+  filasEnriquecidas.forEach((f) => {
+    aoa.push([f.op || '', f.sapResuelto || '', f.codigoResuelto || '', String(f.totalNum), f.observaciones || '']);
   });
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols'] = [{ wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 30 }];

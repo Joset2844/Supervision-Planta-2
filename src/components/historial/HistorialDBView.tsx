@@ -1002,13 +1002,18 @@ export const HistorialDBView: React.FC = () => {
     };
 
     const handleAgregarOpAMaquina = (nombreMaquina: string, codigo: string) => {
+      const nL = nombreMaquina.trim().toLowerCase();
+      const maqRef = maquinas.find(
+        (m) => m.nombre.trim().toLowerCase() === nL || (codigo && (m.codigo || '').trim() === codigo.trim())
+      );
+      const filaHermana = filasEditadas.find((x) => (x.maquina || '').trim().toLowerCase() === nL);
       setFilasEditadas((prev) => [
         ...prev,
         {
           maquina: nombreMaquina,
-          codigoMaquina: codigo,
-          tipoProducto: '',
-          area: '',
+          codigoMaquina: codigo || maqRef?.codigo || filaHermana?.codigoMaquina || '',
+          tipoProducto: (maqRef?.tipoProducto || filaHermana?.tipoProducto || '').toLowerCase(),
+          area: maqRef?.area || filaHermana?.area || '',
           op: '',
           sap: '',
           producto: '',
@@ -1655,7 +1660,7 @@ export const HistorialDBView: React.FC = () => {
                       type="button"
                       onClick={() => {
                         try {
-                          exportarMigracion(filas, rec.fecha, rec.tipo);
+                          exportarMigracion(filas, rec.fecha, rec.tipo, maquinas, catalogo);
                           showToast('ok', 'Excel de migración exportado');
                         } catch (err: any) {
                           showToast('error', err.message || 'Error');

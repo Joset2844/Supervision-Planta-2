@@ -383,7 +383,7 @@ export const ProduccionView: React.FC = () => {
   const handleExportarMigracion = () => {
     try {
       const filas = generarFilasTurno(maquinas, turno, catalogo);
-      exportarMigracion(filas, metaTurno.fecha, metaTurno.tipo);
+      exportarMigracion(filas, metaTurno.fecha, metaTurno.tipo, maquinas, catalogo);
       showToast('ok', 'Excel de migración exportado');
     } catch (err: any) {
       showToast('error', err.message || 'Error al exportar migración');
@@ -915,23 +915,36 @@ export const ProduccionView: React.FC = () => {
                   const esVasos = m.area === 'vasos_envases';
                   const modo = modoCantidadMap[cardKey] || 'total';
 
-                  // Suggestions for this machine instance (búsqueda optimizada por dígitos)
+                  // Suggestions for this machine instance (búsqueda priorizando coincidencia exacta)
                   const queryOp = (opSuggestMap[cardKey] || '').trim();
+                  const queryLower = queryOp.toLowerCase();
                   const queryDigits = queryOp.replace(/\D/g, '');
-                  const matchingSuggs = queryDigits
+                  const matchingSuggs = queryOp
                     ? catalogo
                         .filter((c) => {
                           const cDigits = c.op.replace(/\D/g, '');
-                          return (queryDigits && cDigits.includes(queryDigits)) || c.op.toLowerCase().includes(queryOp.toLowerCase());
+                          return (queryDigits && cDigits.includes(queryDigits)) || c.op.toLowerCase().includes(queryLower);
                         })
                         .sort((a, b) => {
+                          const aLower = a.op.trim().toLowerCase();
+                          const bLower = b.op.trim().toLowerCase();
+                          const aExactStr = aLower === queryLower;
+                          const bExactStr = bLower === queryLower;
+                          if (aExactStr && !bExactStr) return -1;
+                          if (!aExactStr && bExactStr) return 1;
+
                           const aDigits = a.op.replace(/\D/g, '');
                           const bDigits = b.op.replace(/\D/g, '');
-                          const aStarts = queryDigits && aDigits.startsWith(queryDigits);
-                          const bStarts = queryDigits && bDigits.startsWith(queryDigits);
+                          const aExactDig = Boolean(queryDigits && aDigits === queryDigits);
+                          const bExactDig = Boolean(queryDigits && bDigits === queryDigits);
+                          if (aExactDig && !bExactDig) return -1;
+                          if (!aExactDig && bExactDig) return 1;
+
+                          const aStarts = queryDigits ? aDigits.startsWith(queryDigits) : aLower.startsWith(queryLower);
+                          const bStarts = queryDigits ? bDigits.startsWith(queryDigits) : bLower.startsWith(queryLower);
                           if (aStarts && !bStarts) return -1;
                           if (!aStarts && bStarts) return 1;
-                          return aDigits.length - bDigits.length;
+                          return a.op.length - b.op.length;
                         })
                         .slice(0, 8)
                     : [];

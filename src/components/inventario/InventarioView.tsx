@@ -68,21 +68,34 @@ export const InventarioView: React.FC = () => {
 
   const suggestions = useMemo(() => {
     const raw = opInput.trim();
+    const rawLower = raw.toLowerCase();
     const digits = raw.replace(/\D/g, '');
     if (!digits && !raw) return [];
     return catalogo
       .filter((c) => {
         const cDigits = c.op.replace(/\D/g, '');
-        return (digits && cDigits.includes(digits)) || c.op.toLowerCase().includes(raw.toLowerCase());
+        return (digits && cDigits.includes(digits)) || c.op.toLowerCase().includes(rawLower);
       })
       .sort((a, b) => {
+        const aLower = a.op.trim().toLowerCase();
+        const bLower = b.op.trim().toLowerCase();
+        const aExactStr = aLower === rawLower;
+        const bExactStr = bLower === rawLower;
+        if (aExactStr && !bExactStr) return -1;
+        if (!aExactStr && bExactStr) return 1;
+
         const aDigits = a.op.replace(/\D/g, '');
         const bDigits = b.op.replace(/\D/g, '');
-        const aStarts = digits && aDigits.startsWith(digits);
-        const bStarts = digits && bDigits.startsWith(digits);
+        const aExactDig = Boolean(digits && aDigits === digits);
+        const bExactDig = Boolean(digits && bDigits === digits);
+        if (aExactDig && !bExactDig) return -1;
+        if (!aExactDig && bExactDig) return 1;
+
+        const aStarts = digits ? aDigits.startsWith(digits) : aLower.startsWith(rawLower);
+        const bStarts = digits ? bDigits.startsWith(digits) : bLower.startsWith(rawLower);
         if (aStarts && !bStarts) return -1;
         if (!aStarts && bStarts) return 1;
-        return aDigits.length - bDigits.length;
+        return a.op.length - b.op.length;
       })
       .slice(0, 10);
   }, [catalogo, opInput]);
@@ -306,22 +319,35 @@ export const InventarioView: React.FC = () => {
 
     const reader = new FileReader();
     reader.onload = async (evt) => {
+      let nuevo: CatalogoItem[] | null = null;
       try {
         const data = new Uint8Array(evt.target?.result as ArrayBuffer);
         const wb = XLSX.read(data, { type: 'array' });
-        const nuevo = procesarWorkbookCatalogo(wb);
-        if (nuevo) {
-          setCatalogo(nuevo);
-          if (session) {
-            await subirCatalogoASupabase(nuevo);
-          } else {
-            showToast('ok', `Catálogo cargado: ${nuevo.length} OP importadas con cantidades.`);
-          }
-        } else {
-          showToast('error', 'Debe tener columnas OP, Descripción y Cliente');
-        }
+        nuevo = procesarWorkbookCatalogo(wb);
       } catch {
         showToast('error', 'No se pudo leer el archivo Excel');
+        return;
+      }
+
+      if (!nuevo) {
+        showToast('error', 'El Excel debe tener columnas OP, Descripción y Cliente');
+        return;
+      }
+
+      if (session) {
+        try {
+          await subirCatalogoASupabase(nuevo);
+        } catch (err: any) {
+          showToast('error', err?.message || 'Error al subir el catálogo a la nube');
+        }
+      } else {
+        setCatalogo((prev) => {
+          const mapa = new Map<string, CatalogoItem>();
+          prev.forEach((c) => mapa.set(c.op, c));
+          nuevo!.forEach((c) => mapa.set(c.op, c));
+          return Array.from(mapa.values());
+        });
+        showToast('ok', `Catálogo cargado localmente: ${nuevo.length} OP. Inicia sesión en Historial para sincronizar con los demás.`);
       }
     };
     reader.readAsArrayBuffer(file);

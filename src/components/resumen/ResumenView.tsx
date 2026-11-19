@@ -162,7 +162,7 @@ export const ResumenView: React.FC = () => {
 
   const handleExportarMigracion = () => {
     try {
-      exportarMigracion(filas, metaTurno.fecha, metaTurno.tipo);
+      exportarMigracion(filas, metaTurno.fecha, metaTurno.tipo, maquinas, catalogo);
       showToast('ok', 'Excel de migración exportado');
     } catch (err: any) {
       showToast('error', err.message || 'Error al exportar migración');

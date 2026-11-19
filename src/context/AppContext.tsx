@@ -320,12 +320,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const cfg = getSupabaseConfig(false);
       if (!cfg) return;
 
-      await sincronizarCatalogoSupabase();
+      // Normalizar y deduplicar por OP para evitar conflictos en batch upsert
+      const nuevoMap = new Map<string, CatalogoItem>();
+      nuevo.forEach((raw) => {
+        const norm = normalizarCatalogoItem(raw);
+        if (!norm) return;
+        const existente = nuevoMap.get(norm.op);
+        if (!existente || (norm.modelos?.length || 0) >= (existente.modelos?.length || 0)) {
+          nuevoMap.set(norm.op, norm);
+        }
+      });
+      const nuevoNorm = Array.from(nuevoMap.values());
+
+      // Sincronizar catálogo completo desde la nube ANTES de comparar cambios
+      await sincronizarCatalogoSupabase(true);
       const cursor = localStorage.getItem(STORAGE_KEYS.CAT_CURSOR);
       const base = cursor ? catalogoRef.current : [];
       const conocidas: Record<string, string> = {};
       base.forEach((c) => {
-        conocidas[c.op] = canon(c);
+        const normBase = normalizarCatalogoItem(c) || c;
+        conocidas[normBase.op] = canon(normBase);
       });
 
       const cambios: { op: string; datos: CatalogoItem }[] = [];
@@ -333,7 +347,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       let modificadas = 0;
       let iguales = 0;
 
-      nuevo.forEach((it) => {
+      nuevoNorm.forEach((it) => {
         const previo = conocidas[it.op];
         if (previo === undefined) {
           nuevas++;
@@ -347,12 +361,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
 
       if (!cambios.length) {
-        showToast('ok', `Sin cambios: las ${iguales} OP ya están en el catálogo`);
+        showToast('ok', `Sin cambios: las ${iguales} OP ya están al día en el catálogo`);
         return;
       }
 
       const confirmed = window.confirm(
-        `Catálogo del Excel: ${nuevo.length} OP\n\n• Nuevas: ${nuevas}\n• Modificadas: ${modificadas}\n• Sin cambios: ${iguales}\n\nSe subirán ${cambios.length} OP para todos (no se borra ninguna).\n¿Confirmas?`
+        `Catálogo del Excel: ${nuevoNorm.length} OP\n\n• Nuevas: ${nuevas}\n• Modificadas: ${modificadas}\n• Sin cambios: ${iguales}\n\nSe subirán ${cambios.length} OP para todos (no se borra ninguna).\n¿Confirmas?`
       );
       if (!confirmed) return;
 
@@ -372,7 +386,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       await subirLote();
-      await sincronizarCatalogoSupabase();
+      await sincronizarCatalogoSupabase(true);
       showToast('ok', `Catálogo actualizado para todos: ${nuevas} nuevas, ${modificadas} modificadas`);
     },
     [session, sincronizarCatalogoSupabase, showToast]

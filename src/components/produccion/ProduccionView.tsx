@@ -21,6 +21,8 @@ import {
   SlidersHorizontal,
   X,
   RefreshCw,
+  LayoutGrid,
+  Table2,
 } from 'lucide-react';
 import {
   buscarEnCatalogo,
@@ -112,11 +114,45 @@ export const ProduccionView: React.FC = () => {
   const [modoCantidadMap, setModoCantidadMap] = useState<Record<string, 'total' | 'caja'>>({});
   const [opSuggestMap, setOpSuggestMap] = useState<Record<string, string>>({});
   const opSuggestMapRef = React.useRef<Record<string, string>>({});
+  const qtyInputRefs = React.useRef<Record<string, HTMLInputElement | null>>({});
   const [showSuggestMap, setShowSuggestMap] = useState<Record<string, boolean>>({});
   const [turnosNubeSnap, setTurnosNubeSnap] = useState<{
     dbRows: TurnoDBRow[];
     nubeDisponible: boolean;
   }>({ dbRows: [], nubeDisponible: false });
+
+  const [vistaModo, setVistaModo] = useState<'tarjetas' | 'compacto'>(() => {
+    try {
+      const saved = localStorage.getItem('prod_vista_modo');
+      return saved === 'compacto' ? 'compacto' : 'tarjetas';
+    } catch {
+      return 'tarjetas';
+    }
+  });
+  const [filtroArea, setFiltroArea] = useState<'todas' | 'vasos_envases' | 'papel_carton'>('todas');
+  const [compactDetallesMap, setCompactDetallesMap] = useState<Record<string, boolean>>({});
+
+  const cambiarVistaModo = (modo: 'tarjetas' | 'compacto') => {
+    setVistaModo(modo);
+    try {
+      localStorage.setItem('prod_vista_modo', modo);
+    } catch {}
+  };
+
+  const toggleCompactDetalle = (cardKey: string) => {
+    setCompactDetallesMap((prev) => ({ ...prev, [cardKey]: !prev[cardKey] }));
+  };
+
+  const enfocarInputCantidad = (cardKey: string) => {
+    const input = qtyInputRefs.current[cardKey];
+    if (input) {
+      try {
+        input.focus({ preventScroll: true });
+      } catch {
+        input.focus();
+      }
+    }
+  };
 
   useEffect(() => {
     let cancelado = false;
@@ -139,6 +175,11 @@ export const ProduccionView: React.FC = () => {
         return a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' });
       });
   }, [maquinas]);
+
+  const activasFiltradas = useMemo(() => {
+    if (filtroArea === 'todas') return activas;
+    return activas.filter((m) => m.area === filtroArea);
+  }, [activas, filtroArea]);
 
   const totalProducidoGeneral = useMemo(() => {
     return turno.reduce((acc, t) => {
@@ -259,6 +300,7 @@ export const ProduccionView: React.FC = () => {
       const c = parseInt(cajasInputs[cardKey] || '', 10);
       if (!undInputs[cardKey] || !cajasInputs[cardKey] || isNaN(u) || isNaN(c) || u <= 0 || c <= 0) {
         showToast('error', 'Completa unidades x caja y cantidad de cajas');
+        enfocarInputCantidad(cardKey);
         return;
       }
       cantidad = u * c;
@@ -266,6 +308,7 @@ export const ProduccionView: React.FC = () => {
       cantidad = parseInt(cantInputs[cardKey] || '', 10);
       if (!cantInputs[cardKey] || isNaN(cantidad) || cantidad <= 0) {
         showToast('error', 'Ingresa una cantidad válida');
+        enfocarInputCantidad(cardKey);
         return;
       }
     }
@@ -299,11 +342,12 @@ export const ProduccionView: React.FC = () => {
       observaciones: '',
     });
 
-    // Reset inputs
+    // Reset inputs and keep keyboard open on quantity field
     setCantInputs((prev) => ({ ...prev, [cardKey]: '' }));
     setUndInputs((prev) => ({ ...prev, [cardKey]: '' }));
     setCajasInputs((prev) => ({ ...prev, [cardKey]: '' }));
     setMermaInputs((prev) => ({ ...prev, [cardKey]: '' }));
+    enfocarInputCantidad(cardKey);
     showToast('ok', 'Producción registrada');
   };
 
@@ -870,14 +914,781 @@ export const ProduccionView: React.FC = () => {
         <Odometer label="Total Producido (Turno Activo)" value={totalProducidoGeneral} />
       </div>
 
-      {/* Active Machines Cards: 1 column on mobile, 2 columns on tablet/desktop, 3 on wide screens */}
+      {/* View Mode Switch (Tarjetas vs Compacto/Tabla) & Area Filter */}
+      {activas.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-[#1A202C] border border-[#2D3748] rounded-xl px-2.5 py-2 shadow-sm">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <div className="inline-flex p-0.5 bg-[#232A38] rounded-lg border border-[#4A5568]">
+              <button
+                type="button"
+                onClick={() => cambiarVistaModo('tarjetas')}
+                className={`flex items-center gap-1.5 py-1 px-2.5 rounded-md text-xs font-bold uppercase font-['Oswald',sans-serif] tracking-wide cursor-pointer transition-all ${
+                  vistaModo === 'tarjetas'
+                    ? 'bg-[#F2A93B] text-[#12161F] shadow-sm'
+                    : 'text-[#CBD5E0] hover:text-white'
+                }`}
+              >
+                <LayoutGrid size={13} />
+                <span>Tarjetas</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => cambiarVistaModo('compacto')}
+                className={`flex items-center gap-1.5 py-1 px-2.5 rounded-md text-xs font-bold uppercase font-['Oswald',sans-serif] tracking-wide cursor-pointer transition-all ${
+                  vistaModo === 'compacto'
+                    ? 'bg-[#F2A93B] text-[#12161F] shadow-sm'
+                    : 'text-[#CBD5E0] hover:text-white'
+                }`}
+              >
+                <Table2 size={13} />
+                <span>Compacto / Tabla</span>
+              </button>
+            </div>
+
+            <span className="text-[11px] font-['IBM_Plex_Mono',monospace] text-[#A0AEC0] hidden sm:inline">
+              {activasFiltradas.length} máq.
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+            {[
+              { id: 'todas' as const, label: 'Todas' },
+              { id: 'vasos_envases' as const, label: 'Vasos' },
+              { id: 'papel_carton' as const, label: 'Papel' },
+            ].map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => setFiltroArea(f.id)}
+                className={`py-1 px-2 rounded-md text-[11px] font-semibold cursor-pointer border transition-colors whitespace-nowrap ${
+                  filtroArea === f.id
+                    ? 'bg-[#2D3748] text-[#F6AD55] border-[#F2A93B]/60'
+                    : 'bg-[#232A38] text-[#A0AEC0] border-[#4A5568]/60 hover:text-white'
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Active Machines: Card Mode or Compact/Table Mode */}
       {activas.length === 0 ? (
         <div className="border border-dashed border-[#4A5568] rounded-xl p-6 text-center text-xs sm:text-sm text-[#CBD5E0] bg-[#1A202C]">
           No hay máquinas activas en este turno. Ve a la pestaña <strong>Máquinas</strong> y activa las necesarias.
         </div>
+      ) : vistaModo === 'compacto' ? (
+        <div className="bg-[#1A202C] border border-[#2D3748] rounded-xl divide-y divide-[#2D3748] shadow-sm">
+          {/* Desktop Table Header */}
+          <div className="hidden md:grid md:grid-cols-[minmax(150px,1.05fr)_minmax(210px,1.55fr)_minmax(230px,1.4fr)_150px] gap-2 px-3 py-2 bg-[#232A38] text-[10px] font-bold uppercase tracking-wider text-[#CBD5E0] rounded-t-xl border-b border-[#2D3748]">
+            <div>Máquina</div>
+            <div>OP / Modelo / Pliego</div>
+            <div>Cantidad · Merma</div>
+            <div className="text-right">Turno / Acciones</div>
+          </div>
+
+          {activasFiltradas.length === 0 ? (
+            <div className="p-6 text-center text-xs text-[#A0AEC0]">
+              No hay máquinas activas en esta área.
+            </div>
+          ) : (
+            activasFiltradas.map((m) => {
+              const instancias = turnosDeMaquina(m, turno);
+
+              return (
+                <React.Fragment key={m.id}>
+                  {instancias.map((t) => {
+                    const inst = t.instancia || 1;
+                    const cardKey = claveTarjeta(m, inst);
+                    const cardNombre = nombreTarjeta(m, inst);
+                    const sumaProducido = (t.registros || []).reduce((acc, r) => acc + (r.cantidad || 0), 0);
+                    const sumaMerma = (t.registros || []).reduce((acc, r) => acc + (r.merma || 0), 0);
+                    const modeloIdxEfectivo = m.tipoProducto === 'pp' ? -1 : t.modeloIdx;
+                    const currentMatch = buscarEnCatalogo(catalogo, t.op);
+                    const multiPtSinModelo =
+                      m.tipoProducto === 'pt' &&
+                      Boolean(currentMatch && currentMatch.modelos && currentMatch.modelos.length > 1) &&
+                      modeloIdxEfectivo < 0;
+                    const esVasos = m.area === 'vasos_envases';
+                    const modo = modoCantidadMap[cardKey] || 'total';
+                    const detalleAbierto = !!compactDetallesMap[cardKey];
+
+                    const queryOp = (opSuggestMap[cardKey] || '').trim();
+                    const queryLower = queryOp.toLowerCase();
+                    const queryDigits = queryOp.replace(/\D/g, '');
+                    const matchingSuggs = queryOp
+                      ? catalogo
+                          .filter((c) => {
+                            const cDigits = c.op.replace(/\D/g, '');
+                            return (queryDigits && cDigits.includes(queryDigits)) || c.op.toLowerCase().includes(queryLower);
+                          })
+                          .sort((a, b) => {
+                            const aLower = a.op.trim().toLowerCase();
+                            const bLower = b.op.trim().toLowerCase();
+                            const aExactStr = aLower === queryLower;
+                            const bExactStr = bLower === queryLower;
+                            if (aExactStr && !bExactStr) return -1;
+                            if (!aExactStr && bExactStr) return 1;
+
+                            const aDigits = a.op.replace(/\D/g, '');
+                            const bDigits = b.op.replace(/\D/g, '');
+                            const aExactDig = Boolean(queryDigits && aDigits === queryDigits);
+                            const bExactDig = Boolean(queryDigits && bDigits === queryDigits);
+                            if (aExactDig && !bExactDig) return -1;
+                            if (!aExactDig && bExactDig) return 1;
+
+                            const aStarts = queryDigits ? aDigits.startsWith(queryDigits) : aLower.startsWith(queryLower);
+                            const bStarts = queryDigits ? bDigits.startsWith(queryDigits) : bLower.startsWith(queryLower);
+                            if (aStarts && !bStarts) return -1;
+                            if (!aStarts && bStarts) return 1;
+                            return a.op.length - b.op.length;
+                          })
+                          .slice(0, 8)
+                      : [];
+
+                    const avanceOp =
+                      t.op && m.tipoProducto !== 'pp'
+                        ? calcularAvanceOpEnTarjeta({
+                            op: t.op,
+                            modeloIdx: modeloIdxEfectivo,
+                            maquina: m,
+                            catalogMatch: currentMatch,
+                            dbRows: turnosNubeSnap.dbRows,
+                            nubeDisponible: turnosNubeSnap.nubeDisponible,
+                            historial,
+                            turno,
+                            metaTurno,
+                            maquinas,
+                          })
+                        : null;
+
+                    const uVal = parseInt(undInputs[cardKey] || '', 10) || 0;
+                    const cVal = parseInt(cajasInputs[cardKey] || '', 10) || 0;
+                    const totalCajasCalculado = uVal * cVal;
+
+                    return (
+                      <div
+                        key={cardKey}
+                        className={`px-2.5 py-2 md:px-3 md:py-2 transition-colors last:rounded-b-xl ${
+                          t.motivoParada ? 'bg-[#E53E3E]/[0.06]' : 'hover:bg-[#232A38]/40'
+                        }`}
+                      >
+                        <div className="grid grid-cols-1 md:grid-cols-[minmax(150px,1.05fr)_minmax(210px,1.55fr)_minmax(230px,1.4fr)_150px] gap-1.5 md:gap-2 items-start md:items-center">
+                          {/* Col 1: Machine Name + Badges (+ mobile summary/actions) */}
+                          <div className="flex items-center justify-between gap-1.5 min-w-0">
+                            <div className="flex items-center gap-1 flex-wrap min-w-0">
+                              <span className="font-['IBM_Plex_Mono',monospace] font-bold text-xs sm:text-sm text-white truncate">
+                                {cardNombre}
+                              </span>
+                              {m.tipoProducto && (
+                                <span
+                                  className={`text-[9px] font-bold px-1 py-0.2 rounded ${
+                                    m.tipoProducto === 'pp'
+                                      ? 'bg-[#F2A93B]/20 text-[#F6AD55]'
+                                      : 'bg-[#63B3ED]/20 text-[#63B3ED]'
+                                  }`}
+                                >
+                                  {m.tipoProducto.toUpperCase()}
+                                </span>
+                              )}
+                              {t.motivoParada && (
+                                <span
+                                  className="text-[9px] font-bold px-1 py-0.2 rounded bg-[#E53E3E]/25 text-[#FC8181] border border-[#E53E3E]/40 truncate max-w-[100px]"
+                                  title={t.motivoParada}
+                                >
+                                  ⏸ {t.motivoParada}
+                                </span>
+                              )}
+                              {avanceOp && (
+                                <span
+                                  className={`text-[9px] font-bold px-1 py-0.2 rounded font-['IBM_Plex_Mono',monospace] border ${
+                                    avanceOp.pct > 105
+                                      ? 'bg-[#E53E3E]/20 text-[#FC8181] border-[#E53E3E]/50'
+                                      : avanceOp.pct >= 100
+                                      ? 'bg-[#38A169]/20 text-[#48BB78] border-[#38A169]/50'
+                                      : 'bg-[#232A38] text-[#CBD5E0] border-[#4A5568]/60'
+                                  }`}
+                                  title={`OP ${t.op}: ${avanceOp.acumulado.toLocaleString('es-PE')} / ${avanceOp.meta.toLocaleString('es-PE')} u`}
+                                >
+                                  {avanceOp.pct.toFixed(0)}%
+                                </span>
+                              )}
+                              {m.multiOp && inst === 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleAgregarInstancia(m)}
+                                  className="text-[9.5px] font-bold px-1.5 py-0.2 rounded bg-[#232A38] hover:bg-[#2D3748] text-[#F6AD55] border border-[#F2A93B]/40 cursor-pointer"
+                                  title={`Agregar otra OP a ${m.nombre}`}
+                                >
+                                  +OP
+                                </button>
+                              )}
+                              {m.multiOp && instancias.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleEliminarInstancia(m, inst)}
+                                  className="text-[9.5px] font-bold px-1 py-0.2 rounded text-[#FC8181] hover:bg-[#E53E3E]/20 border border-[#E53E3E]/30 cursor-pointer"
+                                  title={`Quitar ${cardNombre}`}
+                                >
+                                  ✕
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Mobile right summary + quick drawer controls */}
+                            <div className="flex md:hidden items-center gap-1.5 shrink-0">
+                              <span className="font-['IBM_Plex_Mono',monospace] text-xs font-bold text-[#F2A93B] tabular-nums">
+                                {sumaProducido.toLocaleString('es-PE')} u
+                              </span>
+                              {sumaMerma > 0 && (
+                                <span className="text-[9.5px] text-[#FC8181] font-mono">-{sumaMerma}</span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => setMaquinaHistorialAbierta(m)}
+                                className="p-1 rounded bg-[#232A38] border border-[#63B3ED]/40 text-[#93C5FD] cursor-pointer"
+                                title={`Historial de ${m.nombre}`}
+                              >
+                                <History size={12} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => toggleCompactDetalle(cardKey)}
+                                className={`flex items-center gap-1 px-1.5 py-1 rounded border text-[10px] font-semibold cursor-pointer transition-colors ${
+                                  detalleAbierto || t.personal || t.motivoParada || (t.registros && t.registros.length > 0)
+                                    ? 'bg-[#2D3748] border-[#F2A93B]/50 text-[#F6AD55]'
+                                    : 'bg-[#232A38] border-[#4A5568] text-[#CBD5E0]'
+                                }`}
+                                title="Personal, parada, observaciones y avances registrados"
+                              >
+                                <SlidersHorizontal size={11} />
+                                {t.registros && t.registros.length > 0 && (
+                                  <span className="font-mono font-bold">{t.registros.length}</span>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Col 2: OP Assignment + Model Chips (if not PP) + Pliego (if PP) */}
+                          <div className="min-w-0 space-y-1">
+                            {t.op ? (
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-1.5 min-w-0 bg-[#232A38] border border-[#4A5568]/80 rounded-lg px-2 py-1">
+                                  <span className="font-['IBM_Plex_Mono',monospace] font-bold text-xs text-[#F6AD55] shrink-0">
+                                    {t.op}
+                                  </span>
+                                  <span className="text-[11px] truncate flex-1 text-[#CBD5E0]">
+                                    {multiPtSinModelo ? (
+                                      <span className="text-[#F6AD55] font-semibold">Elige modelo ↓</span>
+                                    ) : currentMatch ? (
+                                      resolverModelo(currentMatch, modeloIdxEfectivo).descripcion
+                                    ) : (
+                                      <span className="text-[#A0AEC0]">OP manual</span>
+                                    )}
+                                  </span>
+                                  {m.tipoProducto === 'pp' && (
+                                    <select
+                                      value={t.pliego === '' || t.pliego === undefined ? '' : String(t.pliego)}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        updateTurnoMaquina(m.id, inst, {
+                                          pliego: v === '' ? '' : v === 'Tira' || v === 'Retira' ? v : Number(v),
+                                        });
+                                      }}
+                                      aria-label="Pliego PP"
+                                      className="bg-[#1A202C] border border-[#4A5568] rounded px-1 py-0.5 text-[10px] font-bold text-[#F6AD55] outline-none shrink-0"
+                                    >
+                                      <option value="">Único</option>
+                                      <option value="Tira">Tira</option>
+                                      <option value="Retira">Retira</option>
+                                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((pn) => (
+                                        <option key={pn} value={String(pn)}>
+                                          P{pn}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setOpHistorialAbierta({
+                                        op: t.op,
+                                        modeloIdx: modeloIdxEfectivo >= 0 ? modeloIdxEfectivo : -1,
+                                      })
+                                    }
+                                    className="text-[#93C5FD] hover:text-white p-0.5 cursor-pointer shrink-0"
+                                    title="Turnos anteriores de esta OP"
+                                  >
+                                    <History size={12} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => updateTurnoMaquina(m.id, inst, { op: '', modeloIdx: -1 })}
+                                    className="text-[#E53E3E] hover:text-[#FC8181] text-xs font-bold px-0.5 cursor-pointer shrink-0"
+                                    title="Cambiar OP"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+
+                                {m.tipoProducto !== 'pp' &&
+                                  currentMatch &&
+                                  currentMatch.modelos &&
+                                  currentMatch.modelos.length > 1 && (
+                                    <div className="flex gap-1 flex-wrap">
+                                      {m.tipoProducto !== 'pt' && (
+                                        <button
+                                          type="button"
+                                          onClick={() => updateTurnoMaquina(m.id, inst, { modeloIdx: -1 })}
+                                          className={`py-0.5 px-1.5 rounded text-[10px] font-semibold cursor-pointer border ${
+                                            modeloIdxEfectivo === -1
+                                              ? 'bg-[#F2A93B] text-[#12161F] border-[#F2A93B] font-bold'
+                                              : 'bg-[#232A38] text-[#CBD5E0] border-[#4A5568]'
+                                          }`}
+                                        >
+                                          Todos
+                                        </button>
+                                      )}
+                                      {currentMatch.modelos.map((mo, i) => (
+                                        <button
+                                          key={i}
+                                          type="button"
+                                          onClick={() => updateTurnoMaquina(m.id, inst, { modeloIdx: i })}
+                                          className={`py-0.5 px-1.5 rounded text-[10px] font-semibold cursor-pointer border ${
+                                            modeloIdxEfectivo === i
+                                              ? 'bg-[#F2A93B] text-[#12161F] border-[#F2A93B] font-bold'
+                                              : 'bg-[#232A38] text-[#CBD5E0] border-[#4A5568]'
+                                          }`}
+                                        >
+                                          {mo.modelo || mo.descripcion || `Mod ${i + 1}`}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                              </div>
+                            ) : (
+                              <div className="relative flex items-center gap-1">
+                                <div className="relative flex-1 min-w-0">
+                                  <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    pattern="[0-9]*"
+                                    value={opSuggestMap[cardKey] || ''}
+                                    onChange={(e) => {
+                                      const val = e.target.value.replace(/\D/g, '');
+                                      updateOpSuggest(cardKey, val);
+                                      setShowSuggestMap((prev) => ({ ...prev, [cardKey]: true }));
+                                    }}
+                                    onFocus={() => setShowSuggestMap((prev) => ({ ...prev, [cardKey]: true }))}
+                                    onBlur={() => {
+                                      setTimeout(() => {
+                                        setShowSuggestMap((prev) => ({ ...prev, [cardKey]: false }));
+                                        const typed = (opSuggestMapRef.current[cardKey] || '').replace(/\D/g, '').trim();
+                                        if (typed) {
+                                          const exact = buscarEnCatalogo(catalogo, typed);
+                                          if (exact) {
+                                            assignOpIfEmpty(m.id, inst, exact.op);
+                                            updateOpSuggest(cardKey, '');
+                                          }
+                                        }
+                                      }, 200);
+                                    }}
+                                    onKeyDown={(e) => {
+                                      const allowed = [
+                                        'Backspace',
+                                        'Delete',
+                                        'Tab',
+                                        'ArrowLeft',
+                                        'ArrowRight',
+                                        'ArrowUp',
+                                        'ArrowDown',
+                                        'Enter',
+                                        'Escape',
+                                      ];
+                                      if (allowed.includes(e.key) || e.ctrlKey || e.metaKey) {
+                                        if (e.key === 'Enter') {
+                                          e.preventDefault();
+                                          const typed = (opSuggestMapRef.current[cardKey] || '').replace(/\D/g, '').trim();
+                                          if (typed) {
+                                            const exact = buscarEnCatalogo(catalogo, typed);
+                                            const selected = exact
+                                              ? exact.op
+                                              : matchingSuggs.length > 0
+                                              ? matchingSuggs[0].op
+                                              : typed;
+                                            updateTurnoMaquina(m.id, inst, { op: selected, modeloIdx: -1 });
+                                            updateOpSuggest(cardKey, '');
+                                            setShowSuggestMap((prev) => ({ ...prev, [cardKey]: false }));
+                                          }
+                                        }
+                                        return;
+                                      }
+                                      if (!/[0-9]/.test(e.key)) {
+                                        e.preventDefault();
+                                      }
+                                    }}
+                                    placeholder="OP (ej. 261937)..."
+                                    autoComplete="off"
+                                    className="w-full py-1 px-2 pr-6 rounded-lg border border-[#4A5568] text-xs font-['IBM_Plex_Mono',monospace] bg-[#232A38] text-white outline-none focus:border-[#F2A93B]"
+                                  />
+                                  {opSuggestMap[cardKey] && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        updateOpSuggest(cardKey, '');
+                                        setShowSuggestMap((prev) => ({ ...prev, [cardKey]: false }));
+                                      }}
+                                      className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[#A0AEC0] hover:text-white p-0.5"
+                                    >
+                                      <X size={11} />
+                                    </button>
+                                  )}
+                                </div>
+
+                                {m.tipoProducto === 'pp' && (
+                                  <select
+                                    value={t.pliego === '' || t.pliego === undefined ? '' : String(t.pliego)}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      updateTurnoMaquina(m.id, inst, {
+                                        pliego: v === '' ? '' : v === 'Tira' || v === 'Retira' ? v : Number(v),
+                                      });
+                                    }}
+                                    aria-label="Pliego PP"
+                                    className="bg-[#232A38] border border-[#4A5568] rounded-lg px-1.5 py-1 text-[10px] font-bold text-[#CBD5E0] outline-none shrink-0"
+                                  >
+                                    <option value="">Único</option>
+                                    <option value="Tira">Tira</option>
+                                    <option value="Retira">Retira</option>
+                                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((pn) => (
+                                      <option key={pn} value={String(pn)}>
+                                        P{pn}
+                                      </option>
+                                    ))}
+                                  </select>
+                                )}
+
+                                {showSuggestMap[cardKey] && queryDigits !== '' && (
+                                  <div className="absolute z-40 left-0 right-0 top-full mt-1 bg-[#1A202C] border border-[#4A5568] rounded-xl max-h-52 overflow-y-auto shadow-2xl divide-y divide-[#2D3748]">
+                                    {matchingSuggs.length > 0 ? (
+                                      matchingSuggs.map((item) => (
+                                        <button
+                                          key={item.op}
+                                          type="button"
+                                          onMouseDown={(e) => {
+                                            e.preventDefault();
+                                            updateTurnoMaquina(m.id, inst, { op: item.op, modeloIdx: -1 });
+                                            updateOpSuggest(cardKey, '');
+                                            setShowSuggestMap((prev) => ({ ...prev, [cardKey]: false }));
+                                          }}
+                                          onClick={() => {
+                                            if (!(opSuggestMapRef.current[cardKey] || '')) return;
+                                            updateTurnoMaquina(m.id, inst, { op: item.op, modeloIdx: -1 });
+                                            updateOpSuggest(cardKey, '');
+                                            setShowSuggestMap((prev) => ({ ...prev, [cardKey]: false }));
+                                          }}
+                                          className="w-full text-left py-1.5 px-2.5 hover:bg-[#232A38] text-xs block text-white cursor-pointer"
+                                        >
+                                          <div className="flex items-center justify-between gap-1.5">
+                                            <span className="font-bold text-[#F2A93B] font-['IBM_Plex_Mono',monospace]">
+                                              {item.op}
+                                            </span>
+                                            {item.modelos && item.modelos.length > 1 && (
+                                              <span className="text-[9px] px-1 rounded bg-[#F2A93B]/20 text-[#F6AD55] font-bold">
+                                                {item.modelos.length} mod.
+                                              </span>
+                                            )}
+                                          </div>
+                                          <div className="text-[10.5px] text-[#CBD5E0] truncate">
+                                            {descripcionCorta(item)}
+                                          </div>
+                                        </button>
+                                      ))
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onMouseDown={(e) => {
+                                          e.preventDefault();
+                                          updateTurnoMaquina(m.id, inst, { op: queryDigits, modeloIdx: -1 });
+                                          updateOpSuggest(cardKey, '');
+                                          setShowSuggestMap((prev) => ({ ...prev, [cardKey]: false }));
+                                        }}
+                                        onClick={() => {
+                                          if (!(opSuggestMapRef.current[cardKey] || '')) return;
+                                          updateTurnoMaquina(m.id, inst, { op: queryDigits, modeloIdx: -1 });
+                                          updateOpSuggest(cardKey, '');
+                                          setShowSuggestMap((prev) => ({ ...prev, [cardKey]: false }));
+                                        }}
+                                        className="w-full text-left p-2 hover:bg-[#232A38] text-xs text-[#F2A93B] font-bold font-mono cursor-pointer"
+                                      >
+                                        + Asignar OP {queryDigits} (manual)
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Col 3: Direct Fast Quantity / Merma / + Register Row */}
+                          <div className="flex items-center gap-1 w-full min-w-0">
+                            {esVasos && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setModoCantidadMap((prev) => ({
+                                    ...prev,
+                                    [cardKey]: modo === 'caja' ? 'total' : 'caja',
+                                  }))
+                                }
+                                className={`py-1 px-1.5 rounded-lg border text-[10px] font-bold cursor-pointer shrink-0 ${
+                                  modo === 'caja'
+                                    ? 'bg-[#F2A93B]/20 text-[#F6AD55] border-[#F2A93B]/60'
+                                    : 'bg-[#232A38] text-[#A0AEC0] border-[#4A5568]'
+                                }`}
+                                title={modo === 'caja' ? 'Modo: Unidades × Caja (toca para cambiar a Total)' : 'Modo: Unidades Totales (toca para cambiar a ×Caja)'}
+                              >
+                                {modo === 'caja' ? '×Cj' : 'Und'}
+                              </button>
+                            )}
+
+                            {esVasos && modo === 'caja' ? (
+                              <>
+                                <input
+                                  ref={(el) => {
+                                    qtyInputRefs.current[cardKey] = el;
+                                  }}
+                                  type="number"
+                                  inputMode="numeric"
+                                  min="0"
+                                  value={undInputs[cardKey] || ''}
+                                  onChange={(e) => setUndInputs((prev) => ({ ...prev, [cardKey]: e.target.value }))}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      handleRegistrarProduccion(m, inst);
+                                    }
+                                  }}
+                                  placeholder="U/cj"
+                                  className="min-w-0 flex-1 py-1 px-1.5 rounded-lg border border-[#4A5568] text-xs font-['IBM_Plex_Mono',monospace] bg-[#12161F] text-white outline-none focus:border-[#F2A93B]"
+                                />
+                                <input
+                                  type="number"
+                                  inputMode="numeric"
+                                  min="0"
+                                  value={cajasInputs[cardKey] || ''}
+                                  onChange={(e) => setCajasInputs((prev) => ({ ...prev, [cardKey]: e.target.value }))}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      handleRegistrarProduccion(m, inst);
+                                    }
+                                  }}
+                                  placeholder="Cajas"
+                                  className="min-w-0 flex-1 py-1 px-1.5 rounded-lg border border-[#4A5568] text-xs font-['IBM_Plex_Mono',monospace] bg-[#12161F] text-white outline-none focus:border-[#F2A93B]"
+                                />
+                                {totalCajasCalculado > 0 && (
+                                  <span className="text-[10px] font-['IBM_Plex_Mono',monospace] font-bold text-[#F6AD55] shrink-0">
+                                    ={totalCajasCalculado.toLocaleString('es-PE')}
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              <input
+                                ref={(el) => {
+                                  qtyInputRefs.current[cardKey] = el;
+                                }}
+                                type="number"
+                                inputMode="numeric"
+                                min="0"
+                                value={cantInputs[cardKey] || ''}
+                                onChange={(e) => setCantInputs((prev) => ({ ...prev, [cardKey]: e.target.value }))}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    handleRegistrarProduccion(m, inst);
+                                  }
+                                }}
+                                placeholder="Cantidad"
+                                className="min-w-0 flex-1 py-1 px-2 rounded-lg border border-[#4A5568] text-xs font-['IBM_Plex_Mono',monospace] bg-[#12161F] text-white outline-none focus:border-[#F2A93B]"
+                              />
+                            )}
+
+                            <input
+                              type="number"
+                              inputMode="numeric"
+                              min="0"
+                              value={mermaInputs[cardKey] || ''}
+                              onChange={(e) => setMermaInputs((prev) => ({ ...prev, [cardKey]: e.target.value }))}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  handleRegistrarProduccion(m, inst);
+                                }
+                              }}
+                              placeholder="Merma"
+                              className="min-w-0 w-14 sm:w-16 py-1 px-1.5 rounded-lg border border-[#4A5568] text-xs font-['IBM_Plex_Mono',monospace] bg-[#12161F] text-white outline-none focus:border-[#F2A93B]"
+                            />
+
+                            <button
+                              type="button"
+                              onPointerDown={(e) => e.preventDefault()}
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => handleRegistrarProduccion(m, inst)}
+                              className="h-7 px-2.5 bg-[#F2A93B] text-[#12161F] rounded-lg cursor-pointer hover:brightness-105 active:scale-95 transition-all shrink-0 flex items-center justify-center font-bold"
+                              title="Registrar avance"
+                              aria-label="Registrar avance"
+                            >
+                              <Plus size={15} strokeWidth={2.5} />
+                            </button>
+                          </div>
+
+                          {/* Col 4: Desktop Turno Total + Quick Actions */}
+                          <div className="hidden md:flex items-center justify-end gap-1.5">
+                            <div className="text-right mr-1">
+                              <div className="font-['IBM_Plex_Mono',monospace] text-xs font-bold text-[#F2A93B] tabular-nums">
+                                {sumaProducido.toLocaleString('es-PE')} u
+                              </div>
+                              {sumaMerma > 0 && (
+                                <div className="text-[9.5px] text-[#FC8181] font-mono">-{sumaMerma}</div>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setMaquinaHistorialAbierta(m)}
+                              className="p-1.5 rounded-lg bg-[#232A38] hover:bg-[#2D3748] border border-[#63B3ED]/40 text-[#93C5FD] cursor-pointer"
+                              title={`Historial de ${m.nombre}`}
+                            >
+                              <History size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => toggleCompactDetalle(cardKey)}
+                              className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-semibold cursor-pointer transition-colors ${
+                                detalleAbierto || t.personal || t.motivoParada || (t.registros && t.registros.length > 0)
+                                  ? 'bg-[#2D3748] border-[#F2A93B]/50 text-[#F6AD55]'
+                                  : 'bg-[#232A38] border-[#4A5568] text-[#CBD5E0] hover:text-white'
+                              }`}
+                              title="Personal, parada, observaciones y avances registrados"
+                            >
+                              <SlidersHorizontal size={12} />
+                              {t.registros && t.registros.length > 0 && (
+                                <span className="font-mono font-bold">{t.registros.length}</span>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Optional Inline Compact Details Drawer (Personal, Parada, Obs, Records) */}
+                        {detalleAbierto && (
+                          <div className="mt-2 pt-2 border-t border-[#2D3748]/80 space-y-2 bg-[#12161F]/60 rounded-lg p-2">
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+                              <input
+                                type="text"
+                                value={t.personal || ''}
+                                onChange={(e) => updateTurnoMaquina(m.id, inst, { personal: e.target.value })}
+                                placeholder="Personal a cargo"
+                                className="w-full py-1 px-2 rounded-lg border border-[#4A5568] text-xs outline-none bg-[#232A38] text-white focus:border-[#F2A93B]"
+                              />
+                              <select
+                                value={
+                                  t.motivoParada
+                                    ? MOTIVOS_PARADA.includes(t.motivoParada)
+                                      ? t.motivoParada
+                                      : '__otros'
+                                    : ''
+                                }
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (!v) updateTurnoMaquina(m.id, inst, { motivoParada: '' });
+                                  else if (v === '__otros') updateTurnoMaquina(m.id, inst, { motivoParada: 'Otros' });
+                                  else updateTurnoMaquina(m.id, inst, { motivoParada: v });
+                                }}
+                                className="w-full py-1 px-2 rounded-lg border border-[#4A5568] text-xs outline-none bg-[#232A38] text-white"
+                              >
+                                <option value="">🟢 Operativa</option>
+                                {MOTIVOS_PARADA.map((mot) => (
+                                  <option key={mot} value={mot}>
+                                    🔴 Parada: {mot}
+                                  </option>
+                                ))}
+                                <option value="__otros">🔴 Parada: Otros…</option>
+                              </select>
+                              <input
+                                type="text"
+                                value={t.observaciones || ''}
+                                onChange={(e) => updateTurnoMaquina(m.id, inst, { observaciones: e.target.value })}
+                                placeholder="Observaciones (opcional)"
+                                className="w-full py-1 px-2 rounded-lg border border-[#4A5568] text-xs outline-none bg-[#232A38] text-white focus:border-[#F2A93B]"
+                              />
+                            </div>
+
+                            {t.motivoParada && !MOTIVOS_PARADA.includes(t.motivoParada) && (
+                              <input
+                                type="text"
+                                value={
+                                  t.motivoParada === 'Otros' || t.motivoParada === 'otros'
+                                    ? ''
+                                    : t.motivoParada.replace(/^Otros:\s?/i, '')
+                                }
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  updateTurnoMaquina(m.id, inst, {
+                                    motivoParada: val.length > 0 ? `Otros: ${val}` : 'Otros',
+                                  });
+                                }}
+                                placeholder="Especifica el motivo de la parada"
+                                className="w-full py-1 px-2 rounded-lg border border-[#4A5568] text-xs outline-none bg-[#232A38] text-white focus:border-[#F2A93B]"
+                              />
+                            )}
+
+                            {t.registros && t.registros.length > 0 && (
+                              <div className="space-y-1 max-h-32 overflow-y-auto">
+                                {t.registros.map((r, regIdx) => {
+                                  const descLimpia = (r.descripcion || '').replace(/^[^A-Za-zÁÉÍÓÚÑÜáéíóúñü]+/, '').trim();
+                                  return (
+                                    <div
+                                      key={r.id}
+                                      className="py-1 px-2 rounded bg-[#232A38] border border-[#2D3748] flex items-center justify-between gap-1.5 text-[11px]"
+                                    >
+                                      <div className="min-w-0 flex-1 truncate text-[#CBD5E0]">
+                                        <span className="text-[#A0AEC0] font-mono text-[10px] mr-1">#{regIdx + 1}</span>
+                                        <strong className="text-white font-mono">{r.op || 'Sin OP'}</strong>
+                                        {descLimpia && ` — ${descLimpia}`}
+                                      </div>
+                                      <div className="flex items-center gap-1.5 shrink-0">
+                                        <span className="font-mono font-bold text-[#F2A93B]">
+                                          +{r.cantidad.toLocaleString('es-PE')}
+                                        </span>
+                                        {r.merma > 0 && <span className="text-[#E53E3E] text-[10px]">(-{r.merma})</span>}
+                                        <button
+                                          type="button"
+                                          onClick={() => handleEliminarRegistro(m.id, inst, r.id)}
+                                          className="p-0.5 text-[#E53E3E] hover:bg-[#E53E3E]/20 rounded cursor-pointer"
+                                          title="Eliminar registro"
+                                        >
+                                          <Trash2 size={12} />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </React.Fragment>
+              );
+            })
+          )}
+        </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {activas.map((m) => {
+          {activasFiltradas.map((m) => {
             const instancias = turnosDeMaquina(m, turno);
             const metaDiaria = m.meta || 0;
             const tieneMeta = metaDiaria > 0;
@@ -1622,11 +2433,20 @@ export const ProduccionView: React.FC = () => {
                                   {esVasos && modo === 'caja' ? (
                                     <>
                                       <input
+                                        ref={(el) => {
+                                          qtyInputRefs.current[cardKey] = el;
+                                        }}
                                         type="number"
                                         inputMode="numeric"
                                         min="0"
                                         value={undInputs[cardKey] || ''}
                                         onChange={(e) => setUndInputs((prev) => ({ ...prev, [cardKey]: e.target.value }))}
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            handleRegistrarProduccion(m, inst);
+                                          }
+                                        }}
                                         placeholder="Und/caja"
                                         className="min-w-0 flex-1 py-1.5 px-2 rounded-lg border border-[#4A5568] text-xs sm:text-sm font-['IBM_Plex_Mono',monospace] bg-[#1A202C] text-white"
                                       />
@@ -1636,17 +2456,32 @@ export const ProduccionView: React.FC = () => {
                                         min="0"
                                         value={cajasInputs[cardKey] || ''}
                                         onChange={(e) => setCajasInputs((prev) => ({ ...prev, [cardKey]: e.target.value }))}
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            handleRegistrarProduccion(m, inst);
+                                          }
+                                        }}
                                         placeholder="Cajas"
                                         className="min-w-0 flex-1 py-1.5 px-2 rounded-lg border border-[#4A5568] text-xs sm:text-sm font-['IBM_Plex_Mono',monospace] bg-[#1A202C] text-white"
                                       />
                                     </>
                                   ) : (
                                     <input
+                                      ref={(el) => {
+                                        qtyInputRefs.current[cardKey] = el;
+                                      }}
                                       type="number"
                                       inputMode="numeric"
                                       min="0"
                                       value={cantInputs[cardKey] || ''}
                                       onChange={(e) => setCantInputs((prev) => ({ ...prev, [cardKey]: e.target.value }))}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          e.preventDefault();
+                                          handleRegistrarProduccion(m, inst);
+                                        }
+                                      }}
                                       placeholder="Cantidad"
                                       className="min-w-0 flex-1 py-1.5 px-2.5 rounded-lg border border-[#4A5568] text-xs sm:text-sm font-['IBM_Plex_Mono',monospace] bg-[#1A202C] text-white"
                                     />
@@ -1658,12 +2493,20 @@ export const ProduccionView: React.FC = () => {
                                     min="0"
                                     value={mermaInputs[cardKey] || ''}
                                     onChange={(e) => setMermaInputs((prev) => ({ ...prev, [cardKey]: e.target.value }))}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        handleRegistrarProduccion(m, inst);
+                                      }
+                                    }}
                                     placeholder="Merma"
                                     className="min-w-0 w-16 sm:w-20 py-1.5 px-2 rounded-lg border border-[#4A5568] text-xs sm:text-sm font-['IBM_Plex_Mono',monospace] bg-[#1A202C] text-white"
                                   />
 
                                   <button
                                     type="button"
+                                    onPointerDown={(e) => e.preventDefault()}
+                                    onMouseDown={(e) => e.preventDefault()}
                                     onClick={() => handleRegistrarProduccion(m, inst)}
                                     className="w-9 h-8 sm:w-10 sm:h-9 bg-[#F2A93B] text-[#12161F] rounded-lg cursor-pointer hover:brightness-105 active:scale-95 transition-all shadow-sm shrink-0 flex items-center justify-center font-bold"
                                     title="Registrar avance"

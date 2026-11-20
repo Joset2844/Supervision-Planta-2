@@ -274,12 +274,13 @@ export const ProduccionView: React.FC = () => {
     if (isNaN(merma) || merma < 0) merma = 0;
 
     const match = buscarEnCatalogo(catalogo, currentOp);
+    const modeloIdxEfectivo = m.tipoProducto === 'pp' ? -1 : t.modeloIdx;
     const tieneMultiModelos = Boolean(match && match.modelos && match.modelos.length > 1);
-    if (m.tipoProducto === 'pt' && tieneMultiModelos && (t.modeloIdx < 0 || !match?.modelos[t.modeloIdx])) {
+    if (m.tipoProducto === 'pt' && tieneMultiModelos && (modeloIdxEfectivo < 0 || !match?.modelos[modeloIdxEfectivo])) {
       showToast('error', 'Selecciona el modelo específico de la OP antes de agregar en PT');
       return;
     }
-    const modeloElegido = resolverModelo(match, t.modeloIdx);
+    const modeloElegido = resolverModelo(match, modeloIdxEfectivo);
 
     const nuevoRegistro: RegistroTurno = {
       id: Date.now() + '-' + Math.random().toString(36).slice(2, 7),
@@ -895,6 +896,7 @@ export const ProduccionView: React.FC = () => {
                   const sumaProducido = (t.registros || []).reduce((acc, r) => acc + (r.cantidad || 0), 0);
                   const sumaMerma = (t.registros || []).reduce((acc, r) => acc + (r.merma || 0), 0);
 
+                  const modeloIdxEfectivo = m.tipoProducto === 'pp' ? -1 : t.modeloIdx;
                   let subTexto = 'Sin OP asignada';
                   if (t.motivoParada) {
                     subTexto = '⏸ ' + t.motivoParada;
@@ -903,11 +905,11 @@ export const ProduccionView: React.FC = () => {
                     const multiPtSinModelo =
                       m.tipoProducto === 'pt' &&
                       Boolean(match && match.modelos && match.modelos.length > 1) &&
-                      t.modeloIdx < 0;
+                      modeloIdxEfectivo < 0;
                     const descTxt = multiPtSinModelo
                       ? 'Selecciona modelo (PT)'
                       : match
-                      ? resolverModelo(match, t.modeloIdx).descripcion
+                      ? resolverModelo(match, modeloIdxEfectivo).descripcion
                       : '';
                     subTexto = t.op + (descTxt ? ' — ' + descTxt : '') + (t.pliego ? ' (' + etiquetaPliego(t.pliego) + ')' : '');
                   }
@@ -954,7 +956,7 @@ export const ProduccionView: React.FC = () => {
                     t.op && m.tipoProducto !== 'pp'
                       ? calcularAvanceOpEnTarjeta({
                           op: t.op,
-                          modeloIdx: t.modeloIdx,
+                          modeloIdx: modeloIdxEfectivo,
                           maquina: m,
                           catalogMatch: currentMatch,
                           dbRows: turnosNubeSnap.dbRows,
@@ -1018,15 +1020,15 @@ export const ProduccionView: React.FC = () => {
                             {t.op && currentMatch && currentMatch.modelos && currentMatch.modelos.length > 1 && (
                               <span
                                 className={`text-[9.5px] font-bold px-1.5 py-0.2 rounded border truncate max-w-[140px] ${
-                                  t.modeloIdx >= 0 && currentMatch.modelos[t.modeloIdx]
+                                  modeloIdxEfectivo >= 0 && currentMatch.modelos[modeloIdxEfectivo]
                                     ? 'bg-[#38A169]/20 text-[#48BB78] border-[#38A169]/40'
                                     : m.tipoProducto === 'pt'
                                     ? 'bg-[#F2A93B]/25 text-[#F6AD55] border-[#F2A93B]/60'
                                     : 'bg-[#232A38] text-[#CBD5E0] border-[#4A5568]'
                                 }`}
                               >
-                                {t.modeloIdx >= 0 && currentMatch.modelos[t.modeloIdx]
-                                  ? `Mod: ${currentMatch.modelos[t.modeloIdx].modelo || currentMatch.modelos[t.modeloIdx].descripcion}`
+                                {modeloIdxEfectivo >= 0 && currentMatch.modelos[modeloIdxEfectivo]
+                                  ? `Mod: ${currentMatch.modelos[modeloIdxEfectivo].modelo || currentMatch.modelos[modeloIdxEfectivo].descripcion}`
                                   : m.tipoProducto === 'pt'
                                   ? `Elegir modelo (${currentMatch.modelos.length})`
                                   : `${currentMatch.modelos.length} mod. (Todos)`}
@@ -1188,7 +1190,7 @@ export const ProduccionView: React.FC = () => {
                                       onClick={() =>
                                         setOpHistorialAbierta({
                                           op: t.op,
-                                          modeloIdx: t.modeloIdx >= 0 ? t.modeloIdx : -1,
+                                          modeloIdx: modeloIdxEfectivo >= 0 ? modeloIdxEfectivo : -1,
                                         })
                                       }
                                       className="flex items-center gap-1 py-0.5 px-2 rounded-md bg-[#2B6CB0]/25 hover:bg-[#2B6CB0]/40 border border-[#63B3ED]/40 text-[#93C5FD] text-[11px] font-semibold cursor-pointer transition-colors"
@@ -1207,11 +1209,11 @@ export const ProduccionView: React.FC = () => {
                                   </div>
                                 </div>
 
-                                {/* Multi-model chips */}
-                                {currentMatch && currentMatch.modelos && currentMatch.modelos.length > 1 ? (
+                                {/* Multi-model chips (not shown on PP machines, where Todos is automatic) */}
+                                {m.tipoProducto !== 'pp' && currentMatch && currentMatch.modelos && currentMatch.modelos.length > 1 ? (
                                   <div
                                     className={`space-y-1.5 p-2 rounded-lg border ${
-                                      m.tipoProducto === 'pt' && t.modeloIdx < 0
+                                      m.tipoProducto === 'pt' && modeloIdxEfectivo < 0
                                         ? 'bg-[#3A2E1B]/50 border-[#F2A93B]/70'
                                         : 'bg-[#232A38] border-[#4A5568]'
                                     }`}
@@ -1227,7 +1229,7 @@ export const ProduccionView: React.FC = () => {
                                           type="button"
                                           onClick={() => updateTurnoMaquina(m.id, inst, { modeloIdx: -1 })}
                                           className={`py-1 px-2.5 rounded-md text-[11px] font-semibold cursor-pointer border transition-colors ${
-                                            t.modeloIdx === -1
+                                            modeloIdxEfectivo === -1
                                               ? 'bg-[#F2A93B] text-[#12161F] border-[#F2A93B] font-bold'
                                               : 'bg-[#1A202C] text-[#CBD5E0] border-[#4A5568] hover:border-[#F2A93B]/60'
                                           }`}
@@ -1241,7 +1243,7 @@ export const ProduccionView: React.FC = () => {
                                           type="button"
                                           onClick={() => updateTurnoMaquina(m.id, inst, { modeloIdx: i })}
                                           className={`py-1 px-2.5 rounded-md text-[11px] font-semibold cursor-pointer border transition-colors ${
-                                            t.modeloIdx === i
+                                            modeloIdxEfectivo === i
                                               ? 'bg-[#F2A93B] text-[#12161F] border-[#F2A93B] font-bold'
                                               : 'bg-[#1A202C] text-[#CBD5E0] border-[#4A5568] hover:border-[#F2A93B]/60'
                                           }`}
@@ -1263,14 +1265,14 @@ export const ProduccionView: React.FC = () => {
                                     {m.tipoProducto === 'pt' &&
                                     currentMatch.modelos &&
                                     currentMatch.modelos.length > 1 &&
-                                    t.modeloIdx < 0 ? (
+                                    modeloIdxEfectivo < 0 ? (
                                       <span className="text-[#F6AD55] font-semibold">
                                         Selecciona un modelo para ver su meta, SAP y avance en PT
                                       </span>
                                     ) : (
                                       <>
                                         <span className="truncate">
-                                          {resolverModelo(currentMatch, t.modeloIdx).descripcion} ·{' '}
+                                          {resolverModelo(currentMatch, modeloIdxEfectivo).descripcion} ·{' '}
                                           <span className="text-[#A0AEC0]">{currentMatch.cliente}</span>
                                         </span>
                                         {(() => {
@@ -1278,9 +1280,9 @@ export const ProduccionView: React.FC = () => {
                                             currentMatch.modelos && currentMatch.modelos.length > 1
                                           );
                                           const mod =
-                                            t.modeloIdx >= 0 &&
+                                            modeloIdxEfectivo >= 0 &&
                                             currentMatch.modelos &&
-                                            currentMatch.modelos[t.modeloIdx];
+                                            currentMatch.modelos[modeloIdxEfectivo];
                                           if (m.tipoProducto === 'pt' && esMulti && !mod) return null;
                                           const cant = mod && mod.cantidadTotal ? mod.cantidadTotal : currentMatch.cantidadTotal;
                                           if (!cant || Number(cant) <= 0) return null;
@@ -1616,41 +1618,6 @@ export const ProduccionView: React.FC = () => {
 
                             return (
                               <div className="p-2 bg-[#232A38] rounded-lg border border-[#2D3748] space-y-2">
-                                {/* Direct model selector when adding production on multi-model OP */}
-                                {currentMatch && currentMatch.modelos && currentMatch.modelos.length > 1 && (
-                                  <div className="space-y-1">
-                                    <label className="block text-[10px] font-semibold text-[#CBD5E0] uppercase tracking-wide">
-                                      Modelo a agregar{m.tipoProducto === 'pt' ? ' (PT · Obligatorio)' : ''}:
-                                    </label>
-                                    <select
-                                      value={t.modeloIdx}
-                                      onChange={(e) =>
-                                        updateTurnoMaquina(m.id, inst, { modeloIdx: Number(e.target.value) })
-                                      }
-                                      className={`w-full py-1.5 px-2 rounded-lg border text-xs bg-[#1A202C] text-white outline-none ${
-                                        m.tipoProducto === 'pt' && t.modeloIdx < 0
-                                          ? 'border-[#F2A93B] ring-1 ring-[#F2A93B]/30'
-                                          : 'border-[#4A5568] focus:border-[#F2A93B]'
-                                      }`}
-                                    >
-                                      {m.tipoProducto === 'pt' ? (
-                                        <option value={-1}>-- Selecciona el modelo a agregar --</option>
-                                      ) : (
-                                        <option value={-1}>Todos los modelos</option>
-                                      )}
-                                      {currentMatch.modelos.map((mo, idxMo) => (
-                                        <option key={idxMo} value={idxMo}>
-                                          {mo.modelo || mo.descripcion || `Modelo ${idxMo + 1}`}
-                                          {mo.cantidadTotal && Number(mo.cantidadTotal) > 0
-                                            ? ` (${Number(mo.cantidadTotal).toLocaleString('es-PE')} u)`
-                                            : ''}
-                                          {mo.sap ? ` · SAP ${mo.sap}` : ''}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                )}
-
                                 <div className="flex items-center gap-1.5 w-full">
                                   {esVasos && modo === 'caja' ? (
                                     <>

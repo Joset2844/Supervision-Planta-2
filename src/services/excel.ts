@@ -1412,7 +1412,7 @@ export function opsDeTurno(t: TurnoMaquina): { op: string; modeloIdx: number; pl
           op: t.op,
           modeloIdx: typeof t.modeloIdx === 'number' ? t.modeloIdx : -1,
           pliego: t.pliego || '',
-          personal: t.personal || '',
+          personal: String(t.personal || '').toLocaleUpperCase('es-PE'),
         },
       ]
     : [];
@@ -2030,7 +2030,7 @@ export function filasActivacion(maquinas: Maquina[], turno: TurnoMaquina[], cata
         motivo: t.motivoParada || '',
         op: o.op,
         producto: [d, etiquetaPliego(o.pliego)].filter(Boolean).join(' - '),
-        personal: t.personal || '',
+        personal: String(t.personal || '').toLocaleUpperCase('es-PE'),
         observaciones: t.observaciones || '',
       });
     });

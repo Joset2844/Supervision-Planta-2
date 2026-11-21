@@ -1586,10 +1586,15 @@ export const ProduccionView: React.FC = () => {
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
                               <input
                                 type="text"
-                                value={t.personal || ''}
-                                onChange={(e) => updateTurnoMaquina(m.id, inst, { personal: e.target.value })}
+                                autoCapitalize="characters"
+                                value={(t.personal || '').toLocaleUpperCase('es-PE')}
+                                onChange={(e) =>
+                                  updateTurnoMaquina(m.id, inst, {
+                                    personal: e.target.value.toLocaleUpperCase('es-PE'),
+                                  })
+                                }
                                 placeholder="Personal a cargo"
-                                className="w-full py-1 px-2 rounded-lg border border-[#4A5568] text-xs outline-none bg-[#232A38] text-white focus:border-[#F2A93B]"
+                                className="w-full py-1 px-2 rounded-lg border border-[#4A5568] text-xs outline-none bg-[#232A38] text-white uppercase placeholder:normal-case focus:border-[#F2A93B]"
                               />
                               <select
                                 value={
@@ -1913,10 +1918,15 @@ export const ProduccionView: React.FC = () => {
                               </label>
                               <input
                                 type="text"
-                                value={t.personal || ''}
-                                onChange={(e) => updateTurnoMaquina(m.id, inst, { personal: e.target.value })}
+                                autoCapitalize="characters"
+                                value={(t.personal || '').toLocaleUpperCase('es-PE')}
+                                onChange={(e) =>
+                                  updateTurnoMaquina(m.id, inst, {
+                                    personal: e.target.value.toLocaleUpperCase('es-PE'),
+                                  })
+                                }
                                 placeholder="Operador / equipo"
-                                className="w-full py-1.5 px-2.5 rounded-lg border border-[#4A5568] text-sm outline-none bg-[#232A38] text-white focus:border-[#F2A93B]"
+                                className="w-full py-1.5 px-2.5 rounded-lg border border-[#4A5568] text-sm outline-none bg-[#232A38] text-white uppercase placeholder:normal-case focus:border-[#F2A93B]"
                               />
                             </div>
 

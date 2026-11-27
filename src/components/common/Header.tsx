@@ -1,6 +1,6 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
-import { Box, Cpu, TrendingUp, FileText, History, Plus, Search, Sun, Moon, LucideIcon } from 'lucide-react';
+import { Box, Cpu, TrendingUp, FileText, History, Plus, Search, Sun, Moon, Monitor, LucideIcon } from 'lucide-react';
 import { TabType } from '../../types';
 
 export const Header: React.FC = () => {
@@ -25,6 +25,7 @@ export const Header: React.FC = () => {
     { id: 'produccion', label: 'Producción', icon: TrendingUp },
     { id: 'resumen', label: 'Resumen', icon: FileText },
     { id: 'historialdb', label: 'Historial', icon: History },
+    { id: 'tareo', label: 'Tareo', icon: Monitor },
   ];
 
   return (

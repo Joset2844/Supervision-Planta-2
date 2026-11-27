@@ -14,6 +14,8 @@ export const STORAGE_KEYS = {
   SB_URL: 'inventario_sb_url',
   SB_KEY: 'inventario_sb_key',
   SB_SESION: 'inventario_sb_sesion',
+  URL_MONITOR_TAREO: 'inventario_url_monitor_tareo',
+  MODO_MONITOR_TAREO: 'inventario_modo_monitor_tareo',
 };
 
 export function getTodayDateString(): string {

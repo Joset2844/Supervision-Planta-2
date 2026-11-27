@@ -8,7 +8,6 @@ import { MaquinasView } from './components/maquinas/MaquinasView';
 import { ProduccionView } from './components/produccion/ProduccionView';
 import { ResumenView } from './components/resumen/ResumenView';
 import { HistorialDBView } from './components/historial/HistorialDBView';
-import { TareoView } from './components/tareo/TareoView';
 
 export const AppContent: React.FC = () => {
   const { activeTab } = useApp();
@@ -25,7 +24,6 @@ export const AppContent: React.FC = () => {
         {activeTab === 'produccion' && <ProduccionView />}
         {activeTab === 'resumen' && <ResumenView />}
         {activeTab === 'historialdb' && <HistorialDBView />}
-        {activeTab === 'tareo' && <TareoView />}
       </main>
 
       {/* Mobile fixed bottom navigation bar (hidden on desktop md:) */}

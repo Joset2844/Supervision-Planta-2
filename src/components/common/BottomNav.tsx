@@ -1,6 +1,6 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
-import { Box, Cpu, TrendingUp, FileText, History, Monitor, LucideIcon } from 'lucide-react';
+import { Box, Cpu, TrendingUp, FileText, History, LucideIcon } from 'lucide-react';
 import { TabType } from '../../types';
 
 interface NavItem {
@@ -21,7 +21,6 @@ export const BottomNav: React.FC = () => {
     { id: 'produccion', label: 'Producción', icon: TrendingUp },
     { id: 'resumen', label: 'Resumen', icon: FileText },
     { id: 'historialdb', label: 'Historial', icon: History },
-    { id: 'tareo', label: 'Tareo', icon: Monitor },
   ];
 
   return (
@@ -29,7 +28,7 @@ export const BottomNav: React.FC = () => {
       aria-label="Navegación móvil"
       className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#1A202C]/95 backdrop-blur-md border-t border-[#2D3748] px-1 pb-[env(safe-area-inset-bottom,4px)] pt-0.5 shadow-2xl"
     >
-      <div className="grid grid-cols-6 h-[50px] items-stretch">
+      <div className="grid grid-cols-5 h-[50px] items-stretch">
         {navItems.map((item) => {
           const isActive = activeTab === item.id;
           const IconComponent = item.icon;

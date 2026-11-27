@@ -136,5 +136,5 @@ export interface TurnoVersionDBRow {
   accion?: string;
 }
 
-export type TabType = 'inventario' | 'maquinas' | 'produccion' | 'resumen' | 'historialdb' | 'tareo';
+export type TabType = 'inventario' | 'maquinas' | 'produccion' | 'resumen' | 'historialdb';
 

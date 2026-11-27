@@ -9,6 +9,7 @@ import {
   MetaTurno,
   SupabaseSession,
   FilaTurnoExcel,
+  TabType,
 } from '../types';
 import {
   STORAGE_KEYS,
@@ -32,8 +33,8 @@ export interface ToastMessage {
 }
 
 interface AppContextType {
-  activeTab: 'inventario' | 'maquinas' | 'produccion' | 'resumen' | 'historialdb';
-  setActiveTab: (tab: 'inventario' | 'maquinas' | 'produccion' | 'resumen' | 'historialdb') => void;
+  activeTab: TabType;
+  setActiveTab: (tab: TabType) => void;
   subTabInventario: 'agregar' | 'consultar';
   setSubTabInventario: (tab: 'agregar' | 'consultar') => void;
   subTabHistorial: 'turnos' | 'buscar_op' | 'buscar_maquina';
@@ -88,7 +89,7 @@ function canon(o: any): string {
 }
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [activeTab, setActiveTab] = useState<'inventario' | 'maquinas' | 'produccion' | 'resumen' | 'historialdb'>('inventario');
+  const [activeTab, setActiveTab] = useState<TabType>('inventario');
   const [subTabInventario, setSubTabInventario] = useState<'agregar' | 'consultar'>('agregar');
   const [subTabHistorial, setSubTabHistorial] = useState<'turnos' | 'buscar_op' | 'buscar_maquina'>('turnos');
   const [opPreseleccionadaHistorial, setOpPreseleccionadaHistorial] = useState('');
@@ -273,7 +274,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     await pedir();
-    if (!recibidas.length) return 0;
+    if (!recibidas.length) {
+      if (!cursor && catalogoRef.current.length > 0) {
+        catalogoRef.current = [];
+        try {
+          localStorage.removeItem(STORAGE_KEYS.CAT_CURSOR);
+        } catch {}
+        saveStorageItem(STORAGE_KEYS.CATALOGO, []);
+        setCatalogoState([]);
+        return 1;
+      }
+      return 0;
+    }
 
     const currentCatalogo = catalogoRef.current;
     let nuevoCatalogo = currentCatalogo
@@ -300,6 +312,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       });
     }
+    nuevoCatalogo.sort((a, b) => String(b.op || '').localeCompare(String(a.op || ''), 'es', { numeric: true }));
     catalogoRef.current = nuevoCatalogo;
     try {
       localStorage.setItem(STORAGE_KEYS.CAT_CURSOR, maxTs);
@@ -392,14 +405,61 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [session, sincronizarCatalogoSupabase, showToast]
   );
 
-  // Auto sync on mount if online
+  // Auto sync on open/mount, focus/visibility, reconnect, and every 2 hours
   useEffect(() => {
-    if (!navigator.onLine) return;
+    let lastCheck = 0;
+    let bootDone = false;
+    const DOS_HORAS_MS = 2 * 60 * 60 * 1000;
+
+    const intentarSync = (notificarSiHayCambios = false) => {
+      if (!navigator.onLine) return;
+      const now = Date.now();
+      if (now - lastCheck < 60_000) return;
+      lastCheck = now;
+      sincronizarCatalogoSupabase()
+        .then((n) => {
+          if (notificarSiHayCambios && bootDone && n > 0) {
+            showToast('ok', `Catálogo actualizado (${n} OP nuevas o modificadas)`);
+          }
+          bootDone = true;
+        })
+        .catch(() => {
+          bootDone = true;
+        });
+    };
+
     const timer = setTimeout(() => {
-      sincronizarCatalogoSupabase().catch(() => {});
+      intentarSync(true);
     }, 350);
-    return () => clearTimeout(timer);
-  }, [sincronizarCatalogoSupabase]);
+
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        intentarSync(true);
+      }
+    }, DOS_HORAS_MS);
+
+    const onFocusOrOnline = () => {
+      intentarSync(true);
+    };
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        intentarSync(true);
+      }
+    };
+
+    window.addEventListener('online', onFocusOrOnline);
+    window.addEventListener('focus', onFocusOrOnline);
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
+      window.removeEventListener('online', onFocusOrOnline);
+      window.removeEventListener('focus', onFocusOrOnline);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [sincronizarCatalogoSupabase, showToast]);
 
   // Restart shift
   const reiniciarTurno = useCallback(() => {

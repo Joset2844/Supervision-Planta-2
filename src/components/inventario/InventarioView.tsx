@@ -1,7 +1,7 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Odometer } from '../common/Odometer';
-import { Plus, RefreshCw, Upload, Check, Copy, Trash2, Search, X, RotateCcw, Download, Printer, Pencil, History } from 'lucide-react';
+import { Plus, RefreshCw, Upload, Check, Copy, Trash2, Search, X, RotateCcw, Download, Printer, Pencil, History, ArrowUpDown, FileText } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import {
   procesarWorkbookCatalogo,
@@ -46,8 +46,14 @@ export const InventarioView: React.FC = () => {
   const [textoRespaldo, setTextoRespaldo] = useState('');
   const [textoRestaurar, setTextoRestaurar] = useState('');
 
-  // Search state for Consultar
+  // Search & Cleanup state for Consultar
   const [buscarQuery, setBuscarQuery] = useState('');
+  const [campoBusqueda, setCampoBusqueda] = useState<'todos' | 'op' | 'descripcion' | 'cliente' | 'sap' | 'modelo'>('todos');
+  const [filtroTipoOp, setFiltroTipoOp] = useState<'todos' | 'multi' | 'simple' | 'con_sap' | 'sin_sap'>('todos');
+  const [filtroCliente, setFiltroCliente] = useState('');
+  const [ordenCatalogo, setOrdenCatalogo] = useState<'desc' | 'asc' | 'cliente_asc' | 'cant_desc'>('desc');
+  const [limiteResultados, setLimiteResultados] = useState(100);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   // Inline edit state for pending list items
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -418,29 +424,130 @@ export const InventarioView: React.FC = () => {
     }
   };
 
-  // Filtered catalog for Consultar
-  const resultadosConsulta = useMemo(() => {
-    const q = buscarQuery.trim().toLowerCase();
-    if (!q) return catalogo;
-    return catalogo.filter((c) => {
-      if (
-        c.op.toLowerCase().includes(q) ||
-        c.descripcion.toLowerCase().includes(q) ||
-        c.cliente.toLowerCase().includes(q) ||
-        String(c.sap || '').toLowerCase().includes(q)
-      ) {
-        return true;
-      }
-      if (c.modelos && c.modelos.length > 0) {
-        return c.modelos.some(
-          (mo) =>
-            (mo.descripcion || '').toLowerCase().includes(q) ||
-            (mo.sap || '').toLowerCase().includes(q)
-        );
-      }
-      return false;
+  const normalizarBusqueda = (txt: any) =>
+    String(txt || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+
+  const clientesUnicosCatalogo = useMemo(() => {
+    const set = new Set<string>();
+    catalogo.forEach((c) => {
+      const cli = String(c.cliente || '').trim();
+      if (cli) set.add(cli);
     });
-  }, [catalogo, buscarQuery]);
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+  }, [catalogo]);
+
+  const tokensBusqueda = useMemo(() => {
+    return normalizarBusqueda(buscarQuery).split(/\s+/).filter(Boolean);
+  }, [buscarQuery]);
+
+  const hayFiltrosActivos =
+    buscarQuery.trim() !== '' ||
+    campoBusqueda !== 'todos' ||
+    filtroTipoOp !== 'todos' ||
+    filtroCliente !== '';
+
+  const limpiarFiltrosConsulta = () => {
+    setBuscarQuery('');
+    setCampoBusqueda('todos');
+    setFiltroTipoOp('todos');
+    setFiltroCliente('');
+    setLimiteResultados(100);
+  };
+
+  // Filtered and cleanly sorted catalog for Consultar
+  const resultadosConsulta = useMemo(() => {
+    const qRaw = normalizarBusqueda(buscarQuery);
+    const tokens = tokensBusqueda;
+
+    const filtrados = catalogo.filter((c) => {
+      // Filtro por cliente exacto
+      if (filtroCliente && String(c.cliente || '').trim() !== filtroCliente) {
+        return false;
+      }
+
+      // Filtro por tipo de OP / SAP
+      const hasMulti = Boolean(c.modelos && c.modelos.length > 1);
+      const hasSap =
+        Boolean(String(c.sap || '').trim()) ||
+        Boolean(c.modelos && c.modelos.some((mo) => Boolean(String(mo.sap || '').trim())));
+
+      if (filtroTipoOp === 'multi' && !hasMulti) return false;
+      if (filtroTipoOp === 'simple' && hasMulti) return false;
+      if (filtroTipoOp === 'con_sap' && !hasSap) return false;
+      if (filtroTipoOp === 'sin_sap' && hasSap) return false;
+
+      if (tokens.length === 0) return true;
+
+      const opTxt = normalizarBusqueda(c.op);
+      const descTxt = normalizarBusqueda(
+        [
+          c.descripcion,
+          c.descripcionBase,
+          ...(c.modelos || []).map((mo) => `${mo.modelo || ''} ${mo.descripcion || ''}`),
+        ].join(' ')
+      );
+      const cliTxt = normalizarBusqueda(c.cliente);
+      const sapTxt = normalizarBusqueda(
+        [c.sap, ...(c.modelos || []).map((mo) => mo.sap || '')].join(' ')
+      );
+      const modTxt = normalizarBusqueda(
+        (c.modelos || []).map((mo) => `${mo.modelo || ''} ${mo.descripcion || ''} ${mo.sap || ''}`).join(' ')
+      );
+
+      let target = '';
+      if (campoBusqueda === 'op') target = opTxt;
+      else if (campoBusqueda === 'descripcion') target = descTxt;
+      else if (campoBusqueda === 'cliente') target = cliTxt;
+      else if (campoBusqueda === 'sap') target = sapTxt;
+      else if (campoBusqueda === 'modelo') target = modTxt;
+      else target = `${opTxt} ${descTxt} ${cliTxt} ${sapTxt}`;
+
+      return tokens.every((tk) => target.includes(tk));
+    });
+
+    return filtrados.sort((a, b) => {
+      if (qRaw && (campoBusqueda === 'todos' || campoBusqueda === 'op')) {
+        const aOp = normalizarBusqueda(a.op);
+        const bOp = normalizarBusqueda(b.op);
+        const aExact = aOp === qRaw;
+        const bExact = bOp === qRaw;
+        if (aExact && !bExact) return -1;
+        if (!aExact && bExact) return 1;
+        const aStarts = aOp.startsWith(qRaw);
+        const bStarts = bOp.startsWith(qRaw);
+        if (aStarts && !bStarts) return -1;
+        if (!aStarts && bStarts) return 1;
+      }
+      if (ordenCatalogo === 'cliente_asc') {
+        const cCmp = String(a.cliente || '').localeCompare(String(b.cliente || ''), 'es', { sensitivity: 'base' });
+        if (cCmp !== 0) return cCmp;
+      } else if (ordenCatalogo === 'cant_desc') {
+        const qA = Number(a.cantidadTotal) || 0;
+        const qB = Number(b.cantidadTotal) || 0;
+        if (qB !== qA) return qB - qA;
+      }
+      const cmp = String(a.op || '').localeCompare(String(b.op || ''), 'es', { numeric: true });
+      return ordenCatalogo === 'asc' ? cmp : -cmp;
+    });
+  }, [catalogo, buscarQuery, tokensBusqueda, campoBusqueda, filtroTipoOp, filtroCliente, ordenCatalogo]);
+
+  const modeloCoincideBusqueda = (mo: CatalogoItem['modelos'][number]) => {
+    if (tokensBusqueda.length === 0) return false;
+    if (campoBusqueda === 'op' || campoBusqueda === 'cliente') return false;
+    const text = normalizarBusqueda(`${mo.modelo || ''} ${mo.descripcion || ''} ${mo.sap || ''}`);
+    return tokensBusqueda.some((tk) => text.includes(tk));
+  };
+
+  const marcarCopiado = (key: string) => {
+    setCopiedKey(key);
+    window.setTimeout(() => {
+      setCopiedKey((prev) => (prev === key ? null : prev));
+    }, 1500);
+  };
 
   const copiarInfoOp = async (r: CatalogoItem) => {
     const desc = r.modelos && r.modelos.length > 1 && r.descripcionBase ? r.descripcionBase : r.descripcion;
@@ -448,9 +555,67 @@ export const InventarioView: React.FC = () => {
       r.cantidadTotal && Number(r.cantidadTotal) > 0
         ? `\nCantidad Orden: ${Number(r.cantidadTotal).toLocaleString('es-PE')} u`
         : '';
-    const txt = `OP: ${r.op}\nDescripción: ${desc}\nCliente: ${r.cliente}${cantTxt}`;
+    const sapTxt = r.sap ? `\nSAP: ${r.sap}` : '';
+    const txt = `OP: ${r.op}\nDescripción: ${desc}\nCliente: ${r.cliente}${cantTxt}${sapTxt}`;
     const ok = await copiarAlPortapapeles(txt);
-    showToast(ok ? 'ok' : 'error', ok ? `Copiado: ${r.op}` : 'No se pudo copiar');
+    if (ok) marcarCopiado(`op-${r.op}`);
+    showToast(ok ? 'ok' : 'error', ok ? `Datos copiados: ${r.op}` : 'No se pudo copiar');
+  };
+
+  const copiarSoloDescripcionOp = async (r: CatalogoItem) => {
+    const desc = (r.modelos && r.modelos.length > 1 && r.descripcionBase ? r.descripcionBase : r.descripcion) || '';
+    if (!desc.trim()) {
+      showToast('error', 'Esta OP no tiene descripción para copiar');
+      return;
+    }
+    const ok = await copiarAlPortapapeles(desc.trim());
+    if (ok) marcarCopiado(`desc-${r.op}`);
+    showToast(ok ? 'ok' : 'error', ok ? `Descripción copiada: ${r.op}` : 'No se pudo copiar');
+  };
+
+  const obtenerNombreModelo = (r: CatalogoItem, mo: CatalogoItem['modelos'][number]) => {
+    const base = r.descripcionBase || '';
+    if (mo.modelo && mo.modelo.trim()) return mo.modelo.trim();
+    let nombre = mo.descripcion || '';
+    if (base && nombre.indexOf(base + ' - ') === 0) nombre = nombre.slice(base.length + 3);
+    return nombre.trim();
+  };
+
+  const copiarModeloEspecifico = async (
+    r: CatalogoItem,
+    mo: CatalogoItem['modelos'][number],
+    idx: number,
+    soloDescripcion = false
+  ) => {
+    const descCompleta = (mo.descripcion || r.descripcion || '').trim();
+    const nombreModelo = obtenerNombreModelo(r, mo);
+
+    if (soloDescripcion) {
+      const textoDesc = descCompleta || nombreModelo;
+      if (!textoDesc) {
+        showToast('error', 'Este modelo no tiene descripción para copiar');
+        return;
+      }
+      const ok = await copiarAlPortapapeles(textoDesc);
+      if (ok) marcarCopiado(`mod-desc-${r.op}-${idx}`);
+      showToast(ok ? 'ok' : 'error', ok ? `Descripción de modelo copiada (${r.op})` : 'No se pudo copiar');
+      return;
+    }
+
+    const modeloLinea =
+      nombreModelo && descCompleta.toLowerCase() !== nombreModelo.toLowerCase()
+        ? `\nModelo: ${nombreModelo}`
+        : '';
+    const cantMo =
+      mo.cantidadTotal && Number(mo.cantidadTotal) > 0
+        ? `\nCantidad Modelo: ${Number(mo.cantidadTotal).toLocaleString('es-PE')} u`
+        : '';
+    const sapVal = (mo.sap || r.sap || '').trim();
+    const sapLinea = sapVal ? `\nSAP: ${sapVal}` : '';
+    const txt = `OP: ${r.op}${modeloLinea}\nDescripción: ${descCompleta || nombreModelo}\nCliente: ${r.cliente}${cantMo}${sapLinea}`;
+    const ok = await copiarAlPortapapeles(txt);
+    if (ok) marcarCopiado(`mod-datos-${r.op}-${idx}`);
+    showToast(ok ? 'ok' : 'error', ok ? `Modelo copiado: ${nombreModelo || r.op}` : 'No se pudo copiar');
   };
 
   const copiarModelosOp = async (r: CatalogoItem) => {
@@ -461,14 +626,10 @@ export const InventarioView: React.FC = () => {
         ? `${Number(r.cantidadTotal).toLocaleString('es-PE')} u`
         : '—';
     const txt =
-      `OP: ${r.op}\nDescripción: ${base}\nCliente: ${r.cliente}\nCantidad Total: ${cantTotalTxt}\nMODELOS:\n` +
+      `OP: ${r.op}\nDescripción: ${base || r.descripcion}\nCliente: ${r.cliente}\nCantidad Total: ${cantTotalTxt}\nMODELOS:\n` +
       r.modelos
         .map((mo) => {
-          let nombre = mo.modelo;
-          if (!nombre) {
-            nombre = mo.descripcion || '';
-            if (base && nombre.indexOf(base + ' - ') === 0) nombre = nombre.slice(base.length + 3);
-          }
+          const nombre = obtenerNombreModelo(r, mo);
           const cantMo =
             mo.cantidadTotal && Number(mo.cantidadTotal) > 0
               ? ` - ${Number(mo.cantidadTotal).toLocaleString('es-PE')} u`
@@ -478,6 +639,7 @@ export const InventarioView: React.FC = () => {
         })
         .join('\n');
     const ok = await copiarAlPortapapeles(txt);
+    if (ok) marcarCopiado(`mods-${r.op}`);
     showToast(ok ? 'ok' : 'error', ok ? `Modelos copiados: ${r.op}` : 'No se pudo copiar');
   };
 
@@ -1189,24 +1351,155 @@ export const InventarioView: React.FC = () => {
       {/* Subtab: CONSULTAR */}
       {subTabInventario === 'consultar' && (
         <div className="space-y-2.5">
-          <div className="relative">
-            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#CBD5E0]" />
-            <input
-              type="text"
-              value={buscarQuery}
-              onChange={(e) => setBuscarQuery(e.target.value)}
-              placeholder="Buscar por OP, descripción, cliente o SAP…"
-              className="w-full py-1.5 pl-9 pr-8 rounded-lg border border-[#4A5568] text-xs outline-none bg-[#1A202C] text-white focus:border-[#F2A93B] focus:ring-1 focus:ring-[#F2A93B]/30"
-            />
-            {buscarQuery && (
-              <button
-                type="button"
-                onClick={() => setBuscarQuery('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#CBD5E0] hover:text-white p-0.5 flex items-center justify-center cursor-pointer"
-              >
-                <X size={14} />
-              </button>
-            )}
+          {/* Buscador + Filtros */}
+          <div className="bg-[#1A202C] border border-[#2D3748] rounded-xl p-2.5 space-y-2 shadow-sm">
+            <div className="flex flex-col sm:flex-row gap-2">
+              <div className="flex flex-1 min-w-0 gap-1.5">
+                <select
+                  value={campoBusqueda}
+                  onChange={(e) => {
+                    setCampoBusqueda(e.target.value as any);
+                    setLimiteResultados(100);
+                  }}
+                  aria-label="Campo de búsqueda"
+                  className="py-1.5 px-2 rounded-lg border border-[#4A5568] bg-[#232A38] text-[#F6AD55] text-[11px] font-bold outline-none focus:border-[#F2A93B] cursor-pointer shrink-0"
+                  title="Elegir en qué campo buscar"
+                >
+                  <option value="todos">Todo</option>
+                  <option value="op">OP</option>
+                  <option value="descripcion">Descripción</option>
+                  <option value="modelo">Modelo</option>
+                  <option value="cliente">Cliente</option>
+                  <option value="sap">SAP</option>
+                </select>
+                <div className="relative flex-1 min-w-0">
+                  <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#CBD5E0]" />
+                  <input
+                    type="text"
+                    value={buscarQuery}
+                    onChange={(e) => {
+                      setBuscarQuery(e.target.value);
+                      setLimiteResultados(100);
+                    }}
+                    placeholder={
+                      campoBusqueda === 'op'
+                        ? 'Buscar por número de OP…'
+                        : campoBusqueda === 'modelo'
+                        ? 'Buscar por nombre o modelo…'
+                        : campoBusqueda === 'cliente'
+                        ? 'Buscar por cliente…'
+                        : campoBusqueda === 'sap'
+                        ? 'Buscar por código SAP…'
+                        : campoBusqueda === 'descripcion'
+                        ? 'Buscar palabras en descripción…'
+                        : 'Buscar por OP, modelo, descripción, cliente o SAP (acepta varias palabras)…'
+                    }
+                    className="w-full py-1.5 pl-9 pr-8 rounded-lg border border-[#4A5568] text-xs outline-none bg-[#232A38] text-white focus:border-[#F2A93B] focus:ring-1 focus:ring-[#F2A93B]/30"
+                  />
+                  {buscarQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setBuscarQuery('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#CBD5E0] hover:text-white p-0.5 flex items-center justify-center cursor-pointer"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                <div className="flex items-center gap-1 py-1 px-2 rounded-lg border border-[#4A5568] bg-[#232A38]">
+                  <ArrowUpDown size={13} className="text-[#F2A93B] shrink-0" />
+                  <select
+                    value={ordenCatalogo}
+                    onChange={(e) => setOrdenCatalogo(e.target.value as any)}
+                    aria-label="Orden del catálogo"
+                    className="bg-transparent text-xs font-semibold text-[#CBD5E0] outline-none cursor-pointer"
+                  >
+                    <option value="desc" className="bg-[#1A202C] text-white">OP ↓ Recientes</option>
+                    <option value="asc" className="bg-[#1A202C] text-white">OP ↑ Antiguas</option>
+                    <option value="cliente_asc" className="bg-[#1A202C] text-white">Cliente A-Z</option>
+                    <option value="cant_desc" className="bg-[#1A202C] text-white">Cantidad ↓ Mayor</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Fila de filtros avanzados */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-[#2D3748]">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {(
+                  [
+                    { id: 'todos', label: 'Todas' },
+                    { id: 'multi', label: 'Con modelos' },
+                    { id: 'simple', label: 'Simples' },
+                    { id: 'con_sap', label: 'Con SAP' },
+                    { id: 'sin_sap', label: 'Sin SAP' },
+                  ] as const
+                ).map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => {
+                      setFiltroTipoOp(t.id);
+                      setLimiteResultados(100);
+                    }}
+                    className={`py-0.5 px-2 rounded-md text-[11px] font-semibold border cursor-pointer transition-colors ${
+                      filtroTipoOp === t.id
+                        ? 'bg-[#F2A93B] text-[#12161F] border-[#F2A93B]'
+                        : 'bg-[#232A38] text-[#CBD5E0] border-[#4A5568] hover:text-white'
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+
+                {clientesUnicosCatalogo.length > 0 && (
+                  <select
+                    value={filtroCliente}
+                    onChange={(e) => {
+                      setFiltroCliente(e.target.value);
+                      setLimiteResultados(100);
+                    }}
+                    aria-label="Filtrar por cliente"
+                    className={`py-0.5 px-2 rounded-md border text-[11px] font-semibold outline-none cursor-pointer max-w-[200px] ${
+                      filtroCliente
+                        ? 'bg-[#F2A93B]/20 border-[#F2A93B] text-[#F6AD55]'
+                        : 'bg-[#232A38] border-[#4A5568] text-[#CBD5E0]'
+                    }`}
+                  >
+                    <option value="" className="bg-[#1A202C] text-white">
+                      Todos los clientes ({clientesUnicosCatalogo.length})
+                    </option>
+                    {clientesUnicosCatalogo.map((cli) => (
+                      <option key={cli} value={cli} className="bg-[#1A202C] text-white">
+                        {cli}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 text-[11px] text-[#A0AEC0]">
+                <span>
+                  <strong className="text-white font-['IBM_Plex_Mono',monospace]">
+                    {resultadosConsulta.length}
+                  </strong>{' '}
+                  de {catalogo.length} OP
+                </span>
+                {hayFiltrosActivos && (
+                  <button
+                    type="button"
+                    onClick={limpiarFiltrosConsulta}
+                    className="inline-flex items-center gap-1 text-[11px] text-[#F6AD55] hover:text-white bg-[#232A38] border border-[#F2A93B]/40 rounded px-1.5 py-0.5 cursor-pointer"
+                  >
+                    <X size={11} />
+                    <span>Limpiar filtros</span>
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
 
           {catalogo.length === 0 ? (
@@ -1217,7 +1510,7 @@ export const InventarioView: React.FC = () => {
             <>
               {/* MOBILE RESULTS VIEW (Touch Cards) */}
               <div className="block md:hidden space-y-2">
-                {resultadosConsulta.slice(0, 100).map((r) => {
+                {resultadosConsulta.slice(0, limiteResultados).map((r) => {
                   const hasMulti = r.modelos && r.modelos.length > 1;
                   return (
                     <div
@@ -1261,24 +1554,48 @@ export const InventarioView: React.FC = () => {
                           <button
                             type="button"
                             onClick={() => copiarInfoOp(r)}
-                            title="Copiar datos de OP"
-                            className="bg-[#232A38] border border-[#4A5568] text-[#CBD5E0] active:text-white rounded-md p-1.5 flex items-center justify-center cursor-pointer hover:bg-[#2D3748]"
+                            title="Copiar datos completos de la OP"
+                            className={`border rounded-md px-1.5 py-1 text-[10px] font-semibold flex items-center gap-1 cursor-pointer ${
+                              copiedKey === `op-${r.op}`
+                                ? 'bg-[#38A169]/20 border-[#38A169] text-[#68D391]'
+                                : 'bg-[#232A38] border-[#4A5568] text-[#CBD5E0] active:text-white hover:bg-[#2D3748]'
+                            }`}
                           >
-                            <Copy size={13} />
+                            {copiedKey === `op-${r.op}` ? <Check size={12} /> : <Copy size={12} />}
+                            <span>Datos</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => copiarSoloDescripcionOp(r)}
+                            title="Copiar solo la descripción de la OP"
+                            className={`border rounded-md px-1.5 py-1 text-[10px] font-semibold flex items-center gap-1 cursor-pointer ${
+                              copiedKey === `desc-${r.op}`
+                                ? 'bg-[#38A169]/20 border-[#38A169] text-[#68D391]'
+                                : 'bg-[#232A38] border-[#4A5568] text-[#CBD5E0] active:text-white hover:bg-[#2D3748]'
+                            }`}
+                          >
+                            {copiedKey === `desc-${r.op}` ? <Check size={12} /> : <FileText size={12} />}
+                            <span>Desc.</span>
                           </button>
                           {hasMulti && (
                             <button
                               type="button"
                               onClick={() => copiarModelosOp(r)}
-                              className="bg-[#232A38] border border-[#F2A93B] text-[#F6AD55] rounded-md px-2 py-0.5 text-[10px] font-bold flex items-center cursor-pointer hover:bg-[#F2A93B] hover:text-[#12161F]"
+                              title="Copiar todos los modelos de la OP"
+                              className={`border rounded-md px-2 py-1 text-[10px] font-bold flex items-center gap-1 cursor-pointer ${
+                                copiedKey === `mods-${r.op}`
+                                  ? 'bg-[#38A169]/20 border-[#38A169] text-[#68D391]'
+                                  : 'bg-[#232A38] border-[#F2A93B] text-[#F6AD55] hover:bg-[#F2A93B] hover:text-[#12161F]'
+                              }`}
                             >
-                              MODELOS
+                              {copiedKey === `mods-${r.op}` ? <Check size={11} /> : null}
+                              <span>MODELOS</span>
                             </button>
                           )}
                         </div>
                       </div>
 
-                      <div className="text-xs font-semibold text-white truncate">
+                      <div className="text-xs font-semibold text-white break-words">
                         {r.descripcion}
                       </div>
 
@@ -1292,38 +1609,80 @@ export const InventarioView: React.FC = () => {
                       </div>
 
                       {hasMulti && (
-                        <div className="pt-1.5 border-t border-[#2D3748] bg-[#232A38]/50 p-2 rounded-lg space-y-1">
+                        <div className="pt-1.5 border-t border-[#2D3748] bg-[#232A38]/50 p-2 rounded-lg space-y-1.5">
                           <span className="text-[10px] font-semibold text-[#F2A93B] uppercase tracking-wide block">
                             Modelos asociados ({r.modelos.length}):
                           </span>
-                          <ul className="m-0 pl-3 list-disc text-[11px] text-[#CBD5E0] space-y-1">
-                            {r.modelos.map((mo, i) => (
-                              <li key={i}>
-                                <div className="flex items-center justify-between gap-1 flex-wrap">
-                                  <span className="text-white font-medium">{mo.descripcion}</span>
-                                  <div className="flex items-center gap-1.5 text-[10px]">
-                                    {mo.cantidadTotal && Number(mo.cantidadTotal) > 0 ? (
-                                      <span className="text-[#F6AD55] font-['IBM_Plex_Mono',monospace] font-bold bg-[#1A202C] px-1.5 py-0.2 rounded border border-[#4A5568]">
-                                        {Number(mo.cantidadTotal).toLocaleString('es-PE')} u
-                                      </span>
-                                    ) : null}
-                                    {mo.sap && (
-                                      <span className="font-['IBM_Plex_Mono',monospace] text-[#A0AEC0]"> · SAP {mo.sap}</span>
-                                    )}
-                                    <button
-                                      type="button"
-                                      onClick={() => cargarOpEnRegistro(r, i)}
-                                      title={`Registrar modelo: ${mo.descripcion}`}
-                                      className="inline-flex items-center gap-0.5 bg-[#3A2E1B] text-[#F6AD55] border border-[#F2A93B]/40 rounded px-1.5 py-0.2 text-[9.5px] font-bold cursor-pointer hover:bg-[#F2A93B] hover:text-[#12161F]"
-                                    >
-                                      <Plus size={10} />
-                                      <span>Reg.</span>
-                                    </button>
+                          <div className="space-y-1.5">
+                            {r.modelos.map((mo, i) => {
+                              const resalta = modeloCoincideBusqueda(mo);
+                              return (
+                                <div
+                                  key={i}
+                                  className={`rounded-md p-1.5 border space-y-1 ${
+                                    resalta
+                                      ? 'bg-[#F2A93B]/10 border-[#F2A93B]/60'
+                                      : 'bg-[#1A202C]/70 border-[#2D3748]'
+                                  }`}
+                                >
+                                  <div className="text-[11px] text-white font-medium break-words">
+                                    {mo.descripcion}
+                                  </div>
+                                  <div className="flex items-center justify-between gap-1.5 flex-wrap text-[10px]">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      {mo.cantidadTotal && Number(mo.cantidadTotal) > 0 ? (
+                                        <span className="text-[#F6AD55] font-['IBM_Plex_Mono',monospace] font-bold bg-[#1A202C] px-1.5 py-0.5 rounded border border-[#4A5568]">
+                                          {Number(mo.cantidadTotal).toLocaleString('es-PE')} u
+                                        </span>
+                                      ) : null}
+                                      {mo.sap && (
+                                        <span className="font-['IBM_Plex_Mono',monospace] text-[#A0AEC0]">
+                                          SAP {mo.sap}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => copiarModeloEspecifico(r, mo, i, false)}
+                                        title={`Copiar datos completos de este modelo`}
+                                        className={`inline-flex items-center gap-0.5 border rounded px-1.5 py-0.5 text-[9.5px] font-semibold cursor-pointer ${
+                                          copiedKey === `mod-datos-${r.op}-${i}`
+                                            ? 'bg-[#38A169]/20 border-[#38A169] text-[#68D391]'
+                                            : 'bg-[#232A38] text-[#CBD5E0] border-[#4A5568] hover:text-white'
+                                        }`}
+                                      >
+                                        {copiedKey === `mod-datos-${r.op}-${i}` ? <Check size={10} /> : <Copy size={10} />}
+                                        <span>Datos</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => copiarModeloEspecifico(r, mo, i, true)}
+                                        title={`Copiar solo descripción de este modelo`}
+                                        className={`inline-flex items-center gap-0.5 border rounded px-1.5 py-0.5 text-[9.5px] font-semibold cursor-pointer ${
+                                          copiedKey === `mod-desc-${r.op}-${i}`
+                                            ? 'bg-[#38A169]/20 border-[#38A169] text-[#68D391]'
+                                            : 'bg-[#232A38] text-[#CBD5E0] border-[#4A5568] hover:text-white'
+                                        }`}
+                                      >
+                                        {copiedKey === `mod-desc-${r.op}-${i}` ? <Check size={10} /> : <FileText size={10} />}
+                                        <span>Desc.</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => cargarOpEnRegistro(r, i)}
+                                        title={`Registrar modelo: ${mo.descripcion}`}
+                                        className="inline-flex items-center gap-0.5 bg-[#3A2E1B] text-[#F6AD55] border border-[#F2A93B]/40 rounded px-1.5 py-0.5 text-[9.5px] font-bold cursor-pointer hover:bg-[#F2A93B] hover:text-[#12161F]"
+                                      >
+                                        <Plus size={10} />
+                                        <span>Reg.</span>
+                                      </button>
+                                    </div>
                                   </div>
                                 </div>
-                              </li>
-                            ))}
-                          </ul>
+                              );
+                            })}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -1333,7 +1692,7 @@ export const InventarioView: React.FC = () => {
 
               {/* DESKTOP RESULTS VIEW (Table) */}
               <div className="hidden md:block border border-[#2D3748] rounded-xl overflow-x-auto bg-[#1A202C] shadow-sm">
-                <table className="w-full min-w-[650px] text-xs border-collapse">
+                <table className="w-full min-w-[720px] text-xs border-collapse">
                   <thead>
                     <tr className="bg-[#232A38] border-b border-[#2D3748]">
                       <th className="text-left py-2 px-3 text-[11px] font-bold text-[#CBD5E0] uppercase tracking-wider font-['Oswald',sans-serif]">
@@ -1355,17 +1714,17 @@ export const InventarioView: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {resultadosConsulta.slice(0, 200).map((r) => {
+                    {resultadosConsulta.slice(0, limiteResultados).map((r) => {
                       const hasMulti = r.modelos && r.modelos.length > 1;
                       return (
                         <React.Fragment key={r.op}>
                           <tr className="border-b border-[#2D3748] hover:bg-[#232A38] transition-colors">
-                            <td className="py-2 px-3 font-['IBM_Plex_Mono',monospace] font-bold text-[#F6AD55]">
+                            <td className="py-2 px-3 font-['IBM_Plex_Mono',monospace] font-bold text-[#F6AD55] whitespace-nowrap">
                               {r.op}
                             </td>
                             <td className="py-2 px-3 text-white font-medium">{r.descripcion}</td>
                             <td className="py-2 px-3 text-[#CBD5E0]">{r.cliente}</td>
-                            <td className="py-2 px-3 font-['IBM_Plex_Mono',monospace] tabular-nums">
+                            <td className="py-2 px-3 font-['IBM_Plex_Mono',monospace] tabular-nums whitespace-nowrap">
                               {r.cantidadTotal && Number(r.cantidadTotal) > 0 ? (
                                 <span className="font-bold text-[#F6AD55]">
                                   {Number(r.cantidadTotal).toLocaleString('es-PE')} u
@@ -1374,7 +1733,7 @@ export const InventarioView: React.FC = () => {
                                 <span className="text-[#718096]">—</span>
                               )}
                             </td>
-                            <td className="py-2 px-3 font-['IBM_Plex_Mono',monospace] text-[#CBD5E0]">
+                            <td className="py-2 px-3 font-['IBM_Plex_Mono',monospace] text-[#CBD5E0] whitespace-nowrap">
                               {r.sap || '—'}
                             </td>
                             <td className="py-2 px-3 text-right">
@@ -1400,19 +1759,42 @@ export const InventarioView: React.FC = () => {
                                 <button
                                   type="button"
                                   onClick={() => copiarInfoOp(r)}
-                                  title="Copiar OP, Descripción y Cliente"
-                                  className="bg-[#232A38] border border-[#4A5568] text-[#CBD5E0] hover:text-white rounded-md p-1.5 cursor-pointer transition-colors"
+                                  title="Copiar OP, Descripción, Cliente, Cantidad y SAP"
+                                  className={`border rounded-md py-1 px-1.5 text-[10px] font-semibold flex items-center gap-1 whitespace-nowrap cursor-pointer transition-colors ${
+                                    copiedKey === `op-${r.op}`
+                                      ? 'bg-[#38A169]/20 border-[#38A169] text-[#68D391]'
+                                      : 'bg-[#232A38] border-[#4A5568] text-[#CBD5E0] hover:text-white'
+                                  }`}
                                 >
-                                  <Copy size={13} />
+                                  {copiedKey === `op-${r.op}` ? <Check size={12} /> : <Copy size={12} />}
+                                  <span>Datos</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => copiarSoloDescripcionOp(r)}
+                                  title="Copiar solo la descripción de la OP"
+                                  className={`border rounded-md py-1 px-1.5 text-[10px] font-semibold flex items-center gap-1 whitespace-nowrap cursor-pointer transition-colors ${
+                                    copiedKey === `desc-${r.op}`
+                                      ? 'bg-[#38A169]/20 border-[#38A169] text-[#68D391]'
+                                      : 'bg-[#232A38] border-[#4A5568] text-[#CBD5E0] hover:text-white'
+                                  }`}
+                                >
+                                  {copiedKey === `desc-${r.op}` ? <Check size={12} /> : <FileText size={12} />}
+                                  <span>Desc.</span>
                                 </button>
                                 {hasMulti && (
                                   <button
                                     type="button"
                                     onClick={() => copiarModelosOp(r)}
-                                    title="Copiar OP, Cliente y lista de modelos"
-                                    className="bg-[#232A38] border border-[#F2A93B] text-[#F6AD55] rounded-md py-0.5 px-2 text-[10px] font-bold whitespace-nowrap cursor-pointer hover:bg-[#F2A93B] hover:text-[#12161F] transition-colors"
+                                    title="Copiar OP, Cliente y todos los modelos"
+                                    className={`border rounded-md py-1 px-2 text-[10px] font-bold whitespace-nowrap flex items-center gap-1 cursor-pointer transition-colors ${
+                                      copiedKey === `mods-${r.op}`
+                                        ? 'bg-[#38A169]/20 border-[#38A169] text-[#68D391]'
+                                        : 'bg-[#232A38] border-[#F2A93B] text-[#F6AD55] hover:bg-[#F2A93B] hover:text-[#12161F]'
+                                    }`}
                                   >
-                                    MODELOS
+                                    {copiedKey === `mods-${r.op}` ? <Check size={11} /> : null}
+                                    <span>MODELOS</span>
                                   </button>
                                 )}
                               </div>
@@ -1421,37 +1803,73 @@ export const InventarioView: React.FC = () => {
                           {hasMulti && (
                             <tr className="border-b border-[#2D3748] bg-[#1A202C]/60">
                               <td />
-                              <td colSpan={5} className="py-1.5 px-3 pb-2">
-                                <ul className="m-0 pl-3 list-disc text-[11px] text-[#CBD5E0] space-y-1">
-                                  {r.modelos.map((mo, i) => (
-                                    <li key={i}>
-                                      <span className="text-white font-medium">{mo.descripcion}</span>
-                                      {mo.cantidadTotal && Number(mo.cantidadTotal) > 0 ? (
-                                        <>
-                                          {' · Cant: '}
-                                          <span className="font-['IBM_Plex_Mono',monospace] font-bold text-[#F6AD55] bg-[#232A38] px-1.5 py-0.5 rounded border border-[#4A5568]">
-                                            {Number(mo.cantidadTotal).toLocaleString('es-PE')} u
-                                          </span>
-                                        </>
-                                      ) : null}
-                                      {mo.sap && (
-                                        <>
-                                          {' · SAP '}
-                                          <span className="font-['IBM_Plex_Mono',monospace] text-[#A0AEC0]">{mo.sap}</span>
-                                        </>
-                                      )}
-                                      <button
-                                        type="button"
-                                        onClick={() => cargarOpEnRegistro(r, i)}
-                                        title={`Registrar modelo: ${mo.descripcion}`}
-                                        className="ml-2 inline-flex items-center gap-0.5 bg-[#3A2E1B] text-[#F6AD55] border border-[#F2A93B]/40 rounded px-1.5 py-0.2 text-[10px] font-bold cursor-pointer hover:bg-[#F2A93B] hover:text-[#12161F] transition-colors"
+                              <td colSpan={5} className="py-2 px-3">
+                                <div className="space-y-1">
+                                  {r.modelos.map((mo, i) => {
+                                    const resalta = modeloCoincideBusqueda(mo);
+                                    return (
+                                      <div
+                                        key={i}
+                                        className={`flex items-center justify-between gap-2 px-2 py-1 rounded-md border text-[11px] ${
+                                          resalta
+                                            ? 'bg-[#F2A93B]/10 border-[#F2A93B]/60'
+                                            : 'bg-[#232A38]/40 border-[#2D3748]/80'
+                                        }`}
                                       >
-                                        <Plus size={10} />
-                                        <span>Registrar modelo</span>
-                                      </button>
-                                    </li>
-                                  ))}
-                                </ul>
+                                        <div className="flex items-center gap-2 flex-wrap min-w-0">
+                                          <span className="text-white font-medium">{mo.descripcion}</span>
+                                          {mo.cantidadTotal && Number(mo.cantidadTotal) > 0 ? (
+                                            <span className="font-['IBM_Plex_Mono',monospace] font-bold text-[#F6AD55] bg-[#1A202C] px-1.5 py-0.5 rounded border border-[#4A5568] text-[10px]">
+                                              {Number(mo.cantidadTotal).toLocaleString('es-PE')} u
+                                            </span>
+                                          ) : null}
+                                          {mo.sap && (
+                                            <span className="font-['IBM_Plex_Mono',monospace] text-[#A0AEC0] text-[10px]">
+                                              SAP {mo.sap}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="flex items-center gap-1 shrink-0">
+                                          <button
+                                            type="button"
+                                            onClick={() => copiarModeloEspecifico(r, mo, i, false)}
+                                            title="Copiar datos completos de este modelo"
+                                            className={`inline-flex items-center gap-1 border rounded px-1.5 py-0.5 text-[10px] font-semibold cursor-pointer transition-colors ${
+                                              copiedKey === `mod-datos-${r.op}-${i}`
+                                                ? 'bg-[#38A169]/20 border-[#38A169] text-[#68D391]'
+                                                : 'bg-[#232A38] text-[#CBD5E0] border-[#4A5568] hover:text-white'
+                                            }`}
+                                          >
+                                            {copiedKey === `mod-datos-${r.op}-${i}` ? <Check size={10} /> : <Copy size={10} />}
+                                            <span>Datos</span>
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => copiarModeloEspecifico(r, mo, i, true)}
+                                            title="Copiar solo la descripción de este modelo"
+                                            className={`inline-flex items-center gap-1 border rounded px-1.5 py-0.5 text-[10px] font-semibold cursor-pointer transition-colors ${
+                                              copiedKey === `mod-desc-${r.op}-${i}`
+                                                ? 'bg-[#38A169]/20 border-[#38A169] text-[#68D391]'
+                                                : 'bg-[#232A38] text-[#CBD5E0] border-[#4A5568] hover:text-white'
+                                            }`}
+                                          >
+                                            {copiedKey === `mod-desc-${r.op}-${i}` ? <Check size={10} /> : <FileText size={10} />}
+                                            <span>Desc.</span>
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => cargarOpEnRegistro(r, i)}
+                                            title={`Registrar modelo: ${mo.descripcion}`}
+                                            className="inline-flex items-center gap-0.5 bg-[#3A2E1B] text-[#F6AD55] border border-[#F2A93B]/40 rounded px-1.5 py-0.5 text-[10px] font-bold cursor-pointer hover:bg-[#F2A93B] hover:text-[#12161F] transition-colors"
+                                          >
+                                            <Plus size={10} />
+                                            <span>Registrar modelo</span>
+                                          </button>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
                               </td>
                             </tr>
                           )}
@@ -1463,13 +1881,32 @@ export const InventarioView: React.FC = () => {
               </div>
 
               {resultadosConsulta.length === 0 && (
-                <div className="text-center py-6 text-[#CBD5E0] text-xs bg-[#1A202C] rounded-xl border border-[#2D3748]">
-                  Sin resultados {buscarQuery ? `para "${buscarQuery}"` : ''}
+                <div className="text-center py-6 text-[#CBD5E0] text-xs bg-[#1A202C] rounded-xl border border-[#2D3748] space-y-2">
+                  <div>Sin resultados para los filtros actuales</div>
+                  {hayFiltrosActivos && (
+                    <button
+                      type="button"
+                      onClick={limpiarFiltrosConsulta}
+                      className="inline-flex items-center gap-1 py-1 px-2.5 rounded-lg bg-[#232A38] border border-[#4A5568] text-[#F6AD55] hover:text-white text-[11px] font-semibold cursor-pointer"
+                    >
+                      <X size={12} />
+                      <span>Limpiar filtros</span>
+                    </button>
+                  )}
                 </div>
               )}
-              {resultadosConsulta.length > 200 && (
-                <div className="text-center py-2.5 text-[#A0AEC0] text-[11px]">
-                  Mostrando 200 de {resultadosConsulta.length} resultados. Afina tu búsqueda para ver más.
+              {resultadosConsulta.length > limiteResultados && (
+                <div className="text-center py-2.5 flex items-center justify-center gap-3">
+                  <span className="text-[#A0AEC0] text-[11px]">
+                    Mostrando {limiteResultados} de {resultadosConsulta.length} resultados.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setLimiteResultados((prev) => prev + 100)}
+                    className="py-1 px-3 rounded-lg bg-[#232A38] border border-[#4A5568] text-[#F6AD55] hover:text-white text-[11px] font-semibold cursor-pointer"
+                  >
+                    Mostrar 100 más
+                  </button>
                 </div>
               )}
             </>
